@@ -1,0 +1,34 @@
+{
+  "baseRef": "HEAD",
+  "oxlintConfigPath": "./diff-check.oxlintrc.json",
+  "sourceExtensions": [".ts", ".tsx"],
+  "excludePathPrefixes": ["dist/", "coverage/", "vendor/"],
+  "changedFileRules": [
+    {
+      "rule": "diff/key-file-change",
+      "severity": "warning",
+      "matchers": [
+        {
+          "_tag": "File",
+          "path": "bun.lock",
+          "message": "The dependency lockfile changed."
+        },
+        {
+          "_tag": "File",
+          "path": "package.json",
+          "message": "Root package policy or dependencies changed."
+        },
+        {
+          "_tag": "File",
+          "path": "vite.config.ts",
+          "message": "Repository lint or build policy changed."
+        },
+        {
+          "_tag": "Directory",
+          "path": "database/migrations/",
+          "message": "A database migration changed."
+        }
+      ]
+    }
+  ]
+}

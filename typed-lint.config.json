@@ -1,0 +1,9 @@
+{
+  "projects": ["apps/*/tsconfig.json", "packages/*/tsconfig.json"],
+  "rules": {
+    "no-svg-files": "error",
+    "no-xstate-derived-boolean-context": "error",
+    "prefer-effect-array-match": "error",
+    "prefer-typed-schema-apis": "error"
+  }
+}
