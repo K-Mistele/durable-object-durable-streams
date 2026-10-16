@@ -1,0 +1,18 @@
+{
+    "name": "@kylelayer/effect-durable-streams-server",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Protocol engine, storage ports, HttpApi handlers and in-memory host.",
+    "type": "module",
+    "scripts": {
+        "test": "vp test"
+    },
+    "dependencies": {
+        "@kylelayer/effect-durable-streams-protocol": "workspace:*",
+        "effect": "catalog:"
+    },
+    "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "vite-plus": "catalog:"
+    }
+}

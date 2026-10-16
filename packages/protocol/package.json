@@ -1,0 +1,17 @@
+{
+    "name": "@kylelayer/effect-durable-streams-protocol",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Durable Streams wire protocol: schemas, headers, offsets, errors, HttpApi and owner RPC definitions.",
+    "type": "module",
+    "scripts": {
+        "test": "vp test"
+    },
+    "dependencies": {
+        "effect": "catalog:"
+    },
+    "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "vite-plus": "catalog:"
+    }
+}

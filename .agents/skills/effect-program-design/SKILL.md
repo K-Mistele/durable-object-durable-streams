@@ -1,137 +1,148 @@
 ---
 name: effect-program-design
 description: >-
-  Design, write, review, and test production Effect v4 programs: deep services and layers, schemas,
-  tagged errors, observability, Config, persistence, resources, concurrency, schedules, workers,
-  streams, caches, HTTP clients, Effect platform services (Node filesystem/path/crypto/process/socket),
-  and Effect Atom integrations. Use for any Effect application or adapter work.
+  Design, write, review, and test this repo's Effect v4 programs: the durable streams HttpApi, the stream store
+  service and its memory/SQLite layers, Durable Object hosting, auth middleware, the Effect client, schemas, tagged
+  failures, resource ownership, concurrency, and real-seam Effect tests. Use for any Effect service, adapter, or
+  Effect-based code review in this repo.
 ---
 
 # Effect Program Design
 
-Build production Effect v4 programs with small domain-shaped interfaces, typed success and error channels,
-declared dependencies, observable operation boundaries, and tests that substitute layers at real seams. This skill
-combines broad Effect mechanics with deep-module, capture-before-narrow, and real-seam design standards.
+Build deep modules: a small, protocol-shaped public interface hides storage, offset encoding, producer state, fork
+bookkeeping, waiter wake-up, Durable Object routing, and auth. Keep expected failures in Effect's error channel,
+dependencies in `R`, resources in scopes, and external values at explicit schema boundaries.
 
-## Source rule
+This repo is an Effect v4 Bun monorepo built with Vite+. Read the installed declarations first; when they do not
+settle an API, read `../effect` (Effect source) and `../alchemy-effect`, not Effect v3 docs or examples. The protocol
+contract is `../durable-streams/PROTOCOL.md`; the conformance suite is the acceptance test.
 
-Check these before guessing:
+## Architecture
 
-1. the nearest `CLAUDE.md` / `AGENTS.md` and project-local conventions;
-2. the installed `effect`, `@effect/*`, and related package versions and declarations;
-3. the Effect v4 docs at <https://effect.website/docs/v4>;
-4. the installed package source and declarations, plus an upstream source checkout when available, when docs do not settle an API.
+- **The HTTP protocol is the public interface; storage is layer-native.** Clients see `PROTOCOL.md` over `HttpApi`.
+  Handlers depend on a stream store service; hosts choose the in-memory or Durable Object SQLite layer at the
+  composition root with `Layer`, never through a handler or request option.
+- **One Durable Object per stream.** The Worker routes a stream path to its DO. The DO owns that stream's SQLite
+  data, producer state, waiters, and TTL alarm. Do not share mutable state between streams.
+- **The DO runs one request at a time between awaits.** Validate-then-write must run as synchronous SQL with no
+  `await`/async `yield*` between the check and the write. Long-poll and SSE waits park on in-memory waiters, never
+  on a loop that holds the thread, so heavy writes cannot starve reads and the reverse.
+- **Auth is a middleware layer.** Protect the API with `HttpApiMiddleware` and `HttpApiSecurity`; the backend
+  (for example `@yielded/auth`) is a layer the host supplies. Handlers never parse tokens.
+- **Protocol values are schema contracts.** Model headers, offsets, producer fields, and stored records with
+  `Schema`; decode before dispatching. Offsets are opaque and sort as strings.
+- **The client mirrors the server seam.** The Effect client is a `Context.Service` over `HttpClient`; auth plugs in
+  as a layer, not as an argument to each call.
 
-`effect/unstable/*` can change between beta/minor versions. Typecheck examples against the installed version. Local
-project conventions take precedence unless the task explicitly changes them.
+## The defaults
+
+1. **Deep modules.** A module's interface is the cost; hidden behavior is the benefit. A caller supplies the domain
+   values it holds (stream path, offset, body, producer id), not SQL clients, DO stubs, layers, or rows.
+2. **Effects keep their channels.** Expected failure stays in `E`; dependencies stay in `R`; resources have an
+   owning scope. Do not pass errors, services, layers, or effects around as data to compose them later.
+3. **Typed failures recover in-channel.** Classify an untrusted or throwing boundary once, then use
+   `Effect.catchTag` / `Effect.catchTags`. Never recover with `instanceof` or `_tag` checks.
+4. **Normal tagged data dispatches through Effect.** Use `Predicate` for reusable narrowing and `Match` for complete
+   transformations. Lint bans manual `_tag` comparison. See `PREDICATE-MATCH.md`.
+5. **Schemas parse boundaries.** Decode request headers, bodies, query params, SQLite rows, DO RPC payloads, and
+   client responses at their edge. Do not cast or hand-narrow unknown data in the core.
+6. **Tests cross real seams.** Test services through their public interface with `@effect/vitest` and swap layers or
+   real test adapters. No `vi.mock`, module patching, or spies.
+
+## Module depth and seams
+
+- Give public operations named domain inputs and outputs. The store's `append` takes a stream and a body and returns
+  the new tail offset; it hides producer dedupe, sequence checks, and waiter wake-up.
+- Use the deletion test: deleting a useful module should spread its rules across callers, not just remove a
+  pass-through.
+- Keep pure protocol decisions (offset math, conflict order, JSON flattening, cursor choice, header building) apart
+  from the I/O shell. Pure helpers take and return domain values; layers sequence Effects and own I/O.
+- Do not add a wrapper only to mirror an SDK or the DO API. A module earns its seam by owning lifecycle, policy,
+  parsing, or coordination.
+- Runtime-varying capabilities belong in Effect's environment; plain values the caller holds stay explicit inputs.
+
+## Services, layers, and resources
+
+- Prefer `Context.Service` for a capability and `Layer.effect` / `Layer.scoped` for its implementation. Small
+  services may keep shape, tag, and live layer in one file; split storage, transport, and coordination only when the
+  split improves locality.
+- Yield dependencies where an operation needs them rather than forwarding them through public signatures. Lint bans
+  `Effect.serviceOption`; make a dependency required or give it a layer.
+- Provide each layer once at the composition root (Worker entry, DO class, test). The in-memory and SQLite stores
+  must pass the same behavior tests.
+- Timers and fibers started by a Worker request die with it. Keep long-poll waits inside the request that owns them;
+  use DO alarms for work that must outlive a request.
+- Acquire resources in a scope; supervise background work; bound concurrency for fan-out. Respect platform limits
+  (SQLite value size, response read budget) as explicit constants with tests.
+- Use `Effect.fn("streams.operation")` or `Effect.withSpan` on public and I/O boundaries. Never log tokens, secrets,
+  or stream payloads.
+
+## Errors and boundaries
+
+- Model expected failures as tagged errors with fields a caller can use. Errors that map to an HTTP status cross an
+  encoded boundary: use a schema-backed tagged error annotated with its status. Use `Data.TaggedError` for
+  internal-only failures.
+- Wrap a throwing SDK or platform API once at its adapter edge with `Effect.try` / `Effect.tryPromise`, mapping the
+  cause into the module's error vocabulary.
+- Keep rich internal failures until the module boundary, then narrow to the outcomes callers act on: the protocol's
+  status codes. A fallback is correct only when the protocol requires it.
+- Storage failures are defects unless the protocol names a response for them. Do not fall back to an empty stream.
+- Use `catchCause` only for a deliberate top-level safety net, and log the cause before swallowing it.
+
+## Schema and domain data
+
+- Use `Schema.Struct` for records and `Schema.TaggedStruct` plus `Schema.Union` for encoded tagged variants. Derive
+  the type with `typeof X.Type`.
+- Use `Schema.Literals` for closed vocabularies. Brand offsets and stream paths, where mix-ups with plain strings are
+  likely; do not brand by default.
+- Use `Schema.optionalKey`, `Schema.optional`, and `Schema.NullOr` to keep absent, `undefined`, and `null` distinct.
+  Absent headers and empty headers mean different things in the protocol.
+- Decode untrusted values with `Schema.decodeUnknownEffect`; use `make` / `makeEffect` only for trusted construction.
+- Keep stored SQLite schemas backward compatible. Add a migration and upcast at decode rather than changing what an
+  existing column means.
+
+Read `SCHEMA-DOMAIN-PATTERNS.md` for schema, stored-data, and error-model choices.
+
+## Predicate and Match
+
+- Use `Effect.catchTag` / `Effect.catchTags` for typed errors in `Effect<A, E, R>`.
+- Use `Predicate.isTagged` for a reusable one-tag guard or a named multi-tag refinement for `find`, `filter`, or a
+  guard clause.
+- Use `Match.type<T>()` with `Match.tagsExhaustive` for a reusable transformation over a repo-owned closed union, and
+  `Match.value(value)` for a one-off dispatch.
+- Neither `Predicate` nor `Match` validates unknown input. Decode it first.
+
+Read `PREDICATE-MATCH.md` before writing or reviewing tagged control flow.
+
+## Tests
+
+- Use `@effect/vitest` and `it.effect`; provide the layer graph to the program under test.
+- Run store behavior tests against both the in-memory and SQLite layers. Use the real `@effect/sql-sqlite-do` or
+  workerd runtime when behavior depends on SQLite or DO semantics.
+- Use `TestClock`, `Deferred`, `Queue`, `Latch`, and `Ref` instead of sleeps. Long-poll and TTL tests must be
+  deterministic in unit tests; the conformance suite covers real timing.
+- Assert the returned value or error and the observable end state: stored messages, headers, offsets, woken waiters.
+- Fakes fail loudly on unexpected calls. If a dependency cannot be swapped at a layer seam, fix the module boundary.
+- Run `@durable-streams/server-conformance-tests` against the server before calling protocol work done.
 
 ## References
 
-Read only the references relevant to the task; read all matching branches when work crosses concerns.
-
-- Public module depth and domain-shaped APIs: `references/DEEP_MODULES.md`. Read this when modifying or creating services or layers.
-- Service tags, live layers, file placement, `Effect.fn`, or runtime composition:
-  `references/SERVICES_LAYERS.md`.
-- Tagged errors, capture-before-narrow, spans, logs, or error reporting: `references/ERRORS_OBSERVABILITY.md`.
-- Records, schemas, variants, optionality, brands, decoding, or construction:
-  `references/SCHEMA_DATA_MODELING.md`.
-- Config, env vars, providers, or secrets: `references/CONFIG_SECRETS.md`.
-- HTTP, SDK, database boundaries, persistence records, or transactions: `references/BOUNDARIES_PERSISTENCE.md`.
-- Scopes, acquisition, concurrency, best-effort work, or workflow transitions:
-  `references/RESOURCES_CONCURRENCY.md`.
-- Retry, repeat, polling, pacing, backoff, or workers: `references/SCHEDULING_WORKERS.md`.
-- Streams, queues, pubsub, pagination, backpressure, or long-lived consumers: `references/STREAMS.md`.
-- Memoization, TTL caches, request dedupe, or batching: `references/CACHING_BATCHING.md`.
-- Outgoing HTTP, provider adapters, status/decode handling, or HTTP retry: `references/HTTP_CLIENTS.md`.
-- Effect tests, test services, clocks, synchronization, fakes, or real seams: `references/TESTING.md`.
-- Platform-neutral services and the native-API boundary: `references/PLATFORM.md`.
-- Node runtime, filesystem, path, crypto, child processes, sockets/WebSocket, Redis, or workers:
-  `references/PLATFORM_NODE.md`.
-- Effect Atom or React reactive Effect state: `references/EFFECT_ATOM.md`.
-- TypeScript safety, Predicate refinements, Match dispatch, naming, collections, imports, and escape hatches:
-  `references/TYPESCRIPT_CONTRACTS.md`.
-
-## The creed
-
-1. **Deep modules.** The interface is the cost and the hidden implementation is the benefit. Public operations use
-   domain inputs and outputs; callers do not supply credentials, clients, rows, or other internals.
-2. **Everything stays in Effect.** Keep expected failures in `E`, dependencies in `R`, and resources in scopes. Do
-   not pass services, layers, effects, or errors as ordinary values when composition expresses the relationship.
-3. **Two-tier errors.** Classify rich internal failures, capture them, then narrow to a small caller-actionable union.
-   Prefer typed `catchTag`/`catchTags`; never recover with `instanceof`, `Match`, or manual `_tag` comparisons.
-   **Respect the error channel!** Errors stay in the error channel and are not passed as values
-4. **Observe operations.** Every public operation has a stable `Effect.fn("domain.operation")`, an explicit
-   `Effect.withSpan`, or both. Capture raw actionable or unexpected failures before narrowing or swallowing them.
-   Use Effect's logging APIs rather than passing loggers through domain interfaces. Report failures through the
-   repository's configured observability capability, when one exists, before remapping or transforming them.
-
-   ```typescript
-   someEffect.pipe(
-     Effect.tapError(Effect.logError),
-     Effect.tapError((error) => errorReporter.capture(error)),
-   );
-   ```
-
-5. **Test at real seams.** Use the repository's Effect-compatible test integration, layers, deterministic test services, and real infrastructure where
-   behavior depends on it. Assert both the result/error and externally visible end state.
-   **If you are writing tests you MUST read `references/TESTING.md`**
-6. **Use Effect platform services.** Application code depends on Effect's FileSystem, Path, Crypto, HTTP, process,
-   socket, worker, and related abstractions. Native Node/Bun/browser APIs belong only in runtime adapters when no
-   Effect service exists or when constructing the platform layer.
-7. **Use clear domain names.** Follow the host repository's naming conventions. Prefer names that communicate the
-   domain operation over ambiguous generic names, such as `publishPatchDiffToStream` instead of `publish` when the
-   distinction matters.
-
-## Core defaults
-
-- Compose workflows with `Effect.gen` and named `Effect.fn` operations.
-- Prefer `Context.Service` for application capabilities and `Layer.effect`/`Layer.scoped` for live acquisition.
-- Small services may collocate shape, tag, errors, operations, and layer in one file. Split larger services and
-  external adapters by transport, persistence, orchestration, and other meaningful concerns.
-- Keep substantial operation effects independently testable. They may remain beside a small service or move to a
-  concern file; avoid burying business workflows in a large layer-construction closure.
-- Dependencies normally remain ambient in `R`. Capturing a yielded dependency is reasonable for genuinely
-  layer-local acquired state or configured clients.
-- Model ordinary records with `Schema.Struct` plus a same-name inferred interface. Use `Data.TaggedEnum` for trusted
-  internal control flow and Schema tagged variants/unions for encoded boundaries.
-- Prefer `Schema.TaggedError` for network, RPC, queue, workflow, or other boundary-facing errors.
-  `Data.TaggedError` is fine for internal-only failures that do not need a codec.
-- Branding remains optional/aspirational. Named input objects are mandatory even when IDs remain raw strings.
-- Decode unknown input at the adapter edge with Schema; do not cast JSON or leak SDK/row types through a service.
-- Prefer `Predicate` refinements over ad hoc `typeof`, `instanceof`, nullish, and property-presence checks. Predicate is
-  for trusted values or intentional shallow refinement, not a replacement for Schema decoding at an unknown boundary.
-- Prefer exhaustive `Match` dispatch for trusted discriminated unions and multi-branch value handling. Never compare
-  `_tag` manually: use `catchTag`/`catchTags` for Effect errors and `Match` for non-error values.
-- Read runtime config through `Config`; keep secrets `Redacted` until the adapter call.
-- Use `Schedule` for retry/repeat/polling and `Stream` for many-valued, backpressured sources.
-- Use bounded concurrency, bounded/idempotent retries, scoped background fibers, and explicit finalizers.
-- Keep external network calls outside authoritative database transactions.
-- Keep TypeScript contracts precise: no `any`, non-null assertions, `as`-casts, excepting `as const`, vague helper files, or
-  truthiness shortcuts that erase meaningful domain distinctions.
-- **PARSE, DON'T VALIDATE**. Parse at trust boundaries (non-effect-to-effect code bridges, databases, networks) to ensure type safety
-  without bad validation code.
-
-## Testing defaults
-
-- When using `@effect/vitest`, prefer `it.effect`; use `it.live` only when live runtime behavior is itself under test.
-- Use `TestClock`, `Deferred`, `Queue`, `Latch`, and `Ref` instead of sleeps and timing races.
-- Test services, recording fakes, and `Layer.mock` are allowed in test files or dedicated test utilities only—never
-  production source.
-- Use an isolated real database when behavior depends on database semantics, constraints, transactions, conflicts, or state transitions.
-- Use fake Effect services or clients for true external systems and make unexpected methods fail loudly.
-- Prefer dependency substitution through layers over module patching or method spies.
+- `PREDICATE-MATCH.md` for tagged normal-value dispatch.
+- `SCHEMA-DOMAIN-PATTERNS.md` for schema, stored-data, and error-model choices.
+- `REFERENCE.md` for this repo's module map and the expected service/layer shapes.
+- `references/` for deeper topic guides: `STREAMS.md`, `HTTP_CLIENTS.md`, `TESTING.md`, `RESOURCES_CONCURRENCY.md`,
+  `SCHEDULING_WORKERS.md`, `CONFIG_SECRETS.md`, `PLATFORM.md`, and others. Read the ones the task touches. Where
+  they conflict with this file, this file wins.
+- `codebase-design` for shared vocabulary on depth, interface, seam, adapter, leverage, and locality.
 
 ## Review checklist
 
-- [ ] The public surface is small, domain-shaped, and hides implementation knowledge.
-- [ ] Each method exposes a narrow caller-actionable error union.
-- [ ] Rich failures are captured before narrowing or best-effort swallowing.
-- [ ] Every public operation has a safe, stable trace boundary.
-- [ ] Dependencies are declared in `R`; resources and background work have clear scoped owners.
-- [ ] Unknown boundaries are decoded; secrets stay `Redacted`; raw rows/SDK values do not cross public seams.
-- [ ] Runtime refinements use `Predicate`; trusted union dispatch uses exhaustive `Match`; no code manually compares `_tag`.
-- [ ] Native platform APIs are isolated behind Effect services and runtime layers.
-- [ ] Each service's implementing Layer is provided once during application runtime construction unless its required
-      configuration or resources do not exist until a later operation scope.
-- [ ] Retries are bounded and idempotent; concurrency and buffering are bounded.
-- [ ] Tests use real seams, deterministic synchronization, and assert external end state.
+- [ ] The public interface is small, protocol-shaped, and hides storage, routing, and auth wiring.
+- [ ] Expected failures stay typed in `E`; dependencies stay in `R`; resources have an owner.
+- [ ] Unknown data is decoded at the edge; raw rows and DO values do not leak through a public contract.
+- [ ] Typed errors use `catchTag` / `catchTags`; trusted tagged values use `Predicate` / `Match`.
+- [ ] Repo-owned closed unions use an exhaustive transformation where a new variant must force review.
+- [ ] Check-then-write in a DO has no await between check and write; waits never block the thread.
+- [ ] Concurrency, retries, size limits, and resource lifetime are bounded and owned by the module that needs them.
+- [ ] Tests use `@effect/vitest`, real seams, deterministic coordination, and no module mocks or spies.
+- [ ] Both store layers pass the shared behavior tests; protocol changes pass the conformance suite.

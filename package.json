@@ -1,56 +1,58 @@
 {
-  "name": "@humanlayer/monorepo-template",
-  "version": "0.0.0",
-  "private": true,
-  "workspaces": [
-    "packages/*",
-    "apps/*",
-    "tools/*"
-  ],
-  "type": "module",
-  "scripts": {
-    "check": "vp check && bun run typed:check",
-    "typed:check": "tsx tools/typed-lint/src/cli.ts check",
-    "diff:check": "tsx tools/diff-check/src/main.ts --config tools/diff-check/diff-check.config.json",
-    "test": "vp run -r test",
-    "build": "vp run -r build",
-    "ready": "bun run check && bun run test && bun run build",
-    "dev": "vp run website#dev",
-    "prepare": "effect-tsgo patch --oxlint"
-  },
-  "dependencies": {
-    "effect": "^4.0.0-beta.107"
-  },
-  "devDependencies": {
-    "@effect/tsgo": "^0.38.0",
-    "@effect/vitest": "^4.0.0-beta.107",
-    "@oxlint/plugins": "^1.80.0",
-    "eslint-plugin-better-tailwindcss": "^4.7.0",
-    "fast-glob": "^3.3.3",
-    "oxlint": "1.80.0",
-    "oxlint-tsgolint": "7.0.2001",
-    "tailwindcss": "^4.3.3",
-    "tsx": "^4.23.13",
-    "typescript": "7.0.2",
-    "typescript-api": "npm:typescript@5.9.3",
-    "vite": "catalog:",
-    "vite-plus": "catalog:"
-  },
-  "overrides": {
-    "vite": "catalog:"
-  },
-  "devEngines": {
-    "packageManager": {
-      "name": "bun",
-      "version": "1.4.0",
-      "onFail": "download"
+    "name": "@kylelayer/effect-durable-streams-monorepo",
+    "version": "0.0.0",
+    "private": true,
+    "workspaces": [
+        "packages/*",
+        "apps/*",
+        "tools/*"
+    ],
+    "type": "module",
+    "scripts": {
+        "check": "vp check && bun run typed:check",
+        "typed:check": "tsx tools/typed-lint/src/cli.ts check",
+        "test": "vp run -r test",
+        "ready": "bun run check && bun run test",
+        "prepare": "effect-tsgo patch --oxlint"
+    },
+    "dependencies": {
+        "effect": "catalog:"
+    },
+    "devDependencies": {
+        "@effect/tsgo": "0.53.1",
+        "@effect/vitest": "catalog:",
+        "@oxlint/plugins": "1.88.0",
+        "@types/node": "^26.1.1",
+        "fast-glob": "^3.3.3",
+        "oxlint": "1.88.0",
+        "oxlint-tsgolint": "7.0.2004",
+        "tsx": "^4.23.13",
+        "typescript": "7.0.2",
+        "typescript-api": "npm:typescript@5.9.3",
+        "vite": "catalog:",
+        "vite-plus": "catalog:"
+    },
+    "overrides": {
+        "vite": "catalog:"
+    },
+    "devEngines": {
+        "packageManager": {
+            "name": "bun",
+            "version": "1.4.0",
+            "onFail": "download"
+        }
+    },
+    "engines": {
+        "node": ">=22.18.0"
+    },
+    "catalog": {
+        "@effect/sql-pglite": "4.0.5",
+        "@effect/sql-sqlite-do": "4.0.5",
+        "@effect/sql-sqlite-node": "4.0.5",
+        "@effect/vitest": "4.0.5",
+        "alchemy": "2.0.0-beta.83",
+        "effect": "4.0.5",
+        "vite": "npm:@voidzero-dev/vite-plus-core@1.2.0",
+        "vite-plus": "1.2.0"
     }
-  },
-  "engines": {
-    "node": ">=22.18.0"
-  },
-  "catalog": {
-    "vite": "npm:@voidzero-dev/vite-plus-core@0.3.0",
-    "vite-plus": "0.3.0"
-  }
 }

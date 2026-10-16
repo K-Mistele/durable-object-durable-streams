@@ -1,41 +1,23 @@
-# Vite+ Monorepo Starter
+# Effect Durable Streams
 
-A starter for creating a Vite+ monorepo.
+A [Durable Streams](https://github.com/durable-streams/durable-streams) server and client built with Effect. One protocol engine runs on Cloudflare Workers + Durable Objects (deployed with alchemy) or on Effect Cluster.
+
+## Packages
+
+| Package                                        | Contents                                                                            |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `@kylelayer/effect-durable-streams-protocol`   | Wire protocol: schemas, headers, offsets, errors, HttpApi and owner RPC definitions |
+| `@kylelayer/effect-durable-streams-server`     | Protocol engine, storage ports, HttpApi handlers, in-memory host                    |
+| `@kylelayer/effect-durable-streams-cloudflare` | Workers + Durable Objects host                                                      |
+| `@kylelayer/effect-durable-streams-cluster`    | Effect Cluster host                                                                 |
+| `@kylelayer/effect-durable-streams-client`     | Effect client                                                                       |
 
 ## Development
 
-- Run formatting, Oxlint/type checks, and the TypeOnce typed checks:
-
 ```bash
-bun run check
-```
-
-- Check only changed lines and key files against `HEAD` (or pass `--base`):
-
-```bash
-bun run diff:check
-```
-
-- Check everything is ready:
-
-```bash
-vp run ready
-```
-
-- Run the tests:
-
-```bash
-vp run -r test
-```
-
-- Build the monorepo:
-
-```bash
-vp run -r build
-```
-
-- Run the development server:
-
-```bash
-vp run dev
+vp install          # install dependencies
+bun run check       # format, lint, type check, typed lint
+bun run test        # run every package's tests
+bun run diff:check  # check changed lines and key files against HEAD (or pass --base)
+bun run ready       # check + test
 ```
