@@ -10,7 +10,7 @@ import {
     StreamPath,
     StreamSeq,
     TtlSeconds,
-} from './codec.ts';
+} from './codec';
 
 export const CreateStreamRequestHeaders = Schema.Struct({
     'content-type': Schema.optionalKey(Schema.String),

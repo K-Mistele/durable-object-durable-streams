@@ -1,7 +1,18 @@
 import { Schema, SchemaGetter } from 'effect';
 
-export const Offset = Schema.String.check(Schema.isPattern(/^\d{16}_\d{16}$/)).pipe(
-    Schema.brand('Offset'),
+// Offset = number of messages in the stream up to this point.
+// The wire keeps upstream's "<16 digits>_<16 digits>" shape (the conformance suite sends
+// "0000000000000000_0000000000000000"); the left half is always zero.
+export const Offset = Schema.String.check(Schema.isPattern(/^0{16}_\d{16}$/)).pipe(
+    Schema.decodeTo(
+        Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.brand('Offset')),
+        {
+            decode: SchemaGetter.transform((wire) => Number(wire.slice(17))),
+            encode: SchemaGetter.transform(
+                (count) => `${'0'.repeat(16)}_${String(count).padStart(16, '0')}`,
+            ),
+        },
+    ),
 );
 export type Offset = typeof Offset.Type;
 

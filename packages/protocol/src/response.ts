@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { Cursor, Offset, ProducerEpoch, ProducerSeq, TrueFlag, TtlSeconds } from './codec.ts';
+import { Cursor, Offset, ProducerEpoch, ProducerSeq, TrueFlag, TtlSeconds } from './codec';
 
 export const CreateStreamResponseHeaders = Schema.Struct({
     location: Schema.optionalKey(Schema.String),

@@ -1,7 +1,7 @@
 import { Match, Schema } from 'effect';
 import { HttpApiSchema } from 'effect/http-api';
-import { Offset, ProducerEpoch, ProducerSeq } from './codec.ts';
-import { AppendConflictResponseHeaders, StaleEpochResponseHeaders } from './response.ts';
+import { Offset, ProducerEpoch, ProducerSeq } from './codec';
+import { AppendConflictResponseHeaders, StaleEpochResponseHeaders } from './response';
 
 // 400: a request the protocol rejects after headers decoded, e.g. empty POST body, invalid JSON
 export class BadRequestError extends Schema.TaggedError<

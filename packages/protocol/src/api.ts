@@ -13,20 +13,20 @@ import {
     StreamGoneError,
     StreamNotFoundError,
     StreamSeqConflictError,
-} from './errors.ts';
+} from './errors';
 import {
     AppendStreamRequestHeaders,
     CreateStreamRequestHeaders,
     ReadStreamQuery,
     ReadStreamRequestHeaders,
-} from './request.ts';
+} from './request';
 import {
     AppendStreamResponseHeaders,
     CreateStreamResponseHeaders,
     HeadStreamResponseHeaders,
     LongPollNoContentResponseHeaders,
     ReadStreamResponseHeaders,
-} from './response.ts';
+} from './response';
 
 // "/*" matches the whole stream path; the router names the match "*" and drops the leading "/"
 export const StreamRouteParams = Schema.Struct({ '*': Schema.String });
