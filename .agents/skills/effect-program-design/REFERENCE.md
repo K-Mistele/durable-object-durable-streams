@@ -1,7 +1,7 @@
 # Effect Program Design Reference
 
-The repo has no server code yet. This file records the target shape; replace each "planned" entry with a real path
-once the module lands, so later work copies a real pattern.
+This file records the target shape; replace each "planned" entry with a real path once the module lands, so later
+work copies a real pattern.
 
 | Concern                  | Reference                                                       | What it shows                                                        |
 | ------------------------ | --------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -10,9 +10,9 @@ once the module lands, so later work copies a real pattern.
 | Effect source            | `../effect/packages/effect/src/http-api`, `../effect/packages/sql/sqlite-do` | HttpApi, middleware, security, DO SQLite client.        |
 | Alchemy on Cloudflare    | `../alchemy-effect`                                             | Workers, Durable Objects, `alchemy dev`, sync SQLite transactions.   |
 | Client                   | `../effect-durable-streams-client`                              | `DurableStreamsClient` over `HttpClient`, producers, SSE, retries.   |
-| Stream store service     | planned                                                         | The small capability every handler depends on.                       |
-| Memory / SQLite layers   | planned                                                         | Two implementations of one service, one shared behavior test suite.  |
-| HttpApi definition       | planned                                                         | Endpoints, schema-backed errors with `httpApiStatus`, raw bodies.    |
+| Streams service          | `packages/server/src/streams.ts`, `stream-operations.ts`        | The tag handlers depend on; one stream's operations from `makeStreamOperations`. |
+| SQL storage layer        | `packages/server/src/stream-storage.ts` (`layerSql`)            | One `SqlClient` layer; no memory layer. Rules in `stream-rules.ts`.  |
+| HttpApi definition       | `packages/protocol/src/api.ts`                                  | Endpoints, schema-backed errors with `httpApiStatus`, raw bodies.    |
 | Auth middleware          | planned                                                         | `HttpApiMiddleware` + `HttpApiSecurity`, backend supplied by layer.  |
 
 ## Public shape

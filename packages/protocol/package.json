@@ -4,6 +4,9 @@
     "private": true,
     "description": "Durable Streams wire protocol: schemas, headers, offsets, errors, HttpApi and owner RPC definitions.",
     "type": "module",
+    "exports": {
+        "./*": "./src/*.ts"
+    },
     "scripts": {
         "test": "vp test"
     },

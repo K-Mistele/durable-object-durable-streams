@@ -2,8 +2,11 @@
     "name": "@kylelayer/effect-durable-streams-server",
     "version": "0.0.0",
     "private": true,
-    "description": "Protocol engine, storage ports, HttpApi handlers and in-memory host.",
+    "description": "Protocol engine, SQL storage, HttpApi handlers and the Streams service.",
     "type": "module",
+    "exports": {
+        "./*": "./src/*.ts"
+    },
     "scripts": {
         "test": "vp test"
     },
