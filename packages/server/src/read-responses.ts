@@ -247,7 +247,10 @@ export const layerReadResponses = Layer.effect(
                 const firstRange = yield* streams.startRead({ stream, from: requestedOffset });
                 const sendsBase64 = isBase64(firstRange.metadata.contentType);
 
-                const eventsForRange = (range: ReadRange) =>
+                // a read's events go out as one chunk: a client that stops reading at a blank
+                // line after "event: control" must not stop between a data event that contains
+                // that text and the real control event
+                const sseTextForRange = (range: ReadRange) =>
                     Effect.gen(function* () {
                         const control = range.metadata.closed
                             ? yield* sseControlEvent({
@@ -260,7 +263,7 @@ export const layerReadResponses = Layer.effect(
                                   upToDate: true,
                               });
                         if (range.start === range.end) {
-                            return Arr.of(control);
+                            return Sse.encoder.write(control);
                         }
                         const bytes = yield* Stream.mkUint8Array(
                             streams.readBody({
@@ -273,33 +276,32 @@ export const layerReadResponses = Layer.effect(
                         const data = sendsBase64
                             ? sseBinaryDataEvent(bytes)
                             : sseDataEvent(textDecoder.decode(bytes));
-                        return Arr.make(data, control);
+                        return Sse.encoder.write(data) + Sse.encoder.write(control);
                     });
 
-                const eventsAfterWaiting = Stream.paginate(firstRange.end, (after: Offset) =>
+                const sseTextAfterWaiting = Stream.paginate(firstRange.end, (after: Offset) =>
                     Effect.gen(function* () {
                         yield* streams.waitForNewMessages({ stream, after, timeout: waitTimeout });
                         const range = yield* streams.startRead({ stream, from: after });
-                        const events = yield* eventsForRange(range);
+                        const text = yield* sseTextForRange(range);
                         const next = range.metadata.closed ? Option.none() : Option.some(range.end);
-                        return [events, next] as const;
+                        return [Arr.of(text), next] as const;
                     }),
                 );
 
-                const events = Stream.fromIterableEffect(eventsForRange(firstRange)).pipe(
-                    Stream.concat(firstRange.metadata.closed ? Stream.empty : eventsAfterWaiting),
+                const sseText = Stream.fromEffect(sseTextForRange(firstRange)).pipe(
+                    Stream.concat(firstRange.metadata.closed ? Stream.empty : sseTextAfterWaiting),
                     Stream.interruptWhen(Effect.sleep(lifetime)),
                     // the status is already sent: a stream deleted mid-response just ends it
                     Stream.catchTags({
                         StreamNotFoundError: () => Stream.empty,
                         StreamGoneError: () => Stream.empty,
                     }),
-                    Stream.map((event) => Sse.encoder.write(event)),
                     Stream.encodeText,
                     Stream.orDie,
                 );
 
-                return HttpServerResponse.stream(events, {
+                return HttpServerResponse.stream(sseText, {
                     contentType: 'text/event-stream',
                     headers: {
                         'cache-control': 'no-cache',
