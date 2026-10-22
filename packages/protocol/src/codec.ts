@@ -19,11 +19,12 @@ export type Offset = typeof Offset.Type;
 export const OffsetParam = Schema.Union([Schema.Literals(['-1', 'now']), Offset]);
 export type OffsetParam = typeof OffsetParam.Type;
 
-// "0" | "[1-9]\d*" → safe integer (Schema.Int is Number.isSafeInteger)
+// "0" | "[1-9]\d*" → safe integer (Schema.Int is Number.isSafeInteger); the decoded side checks
+// >= 0 too, so a negative value fails to encode instead of producing an invalid header
 export const NonNegativeIntFromString = Schema.String.check(
     Schema.isPattern(/^(0|[1-9]\d*)$/),
 ).pipe(
-    Schema.decodeTo(Schema.Int, {
+    Schema.decodeTo(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), {
         decode: SchemaGetter.transform(Number),
         encode: SchemaGetter.transform(String),
     }),

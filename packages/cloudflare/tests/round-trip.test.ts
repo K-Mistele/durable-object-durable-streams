@@ -1,7 +1,8 @@
 import { expect } from '@effect/vitest';
 import * as Cloudflare from 'alchemy/Cloudflare';
 import * as Test from 'alchemy/Test/Vitest';
-import { Clock, Duration, Effect } from 'effect';
+import { Arbitrary, Array as Arr, Clock, Duration, Effect, Option, Random, Schema } from 'effect';
+import { Base64 } from 'effect/encoding';
 import * as HttpBody from 'effect/http/HttpBody';
 import * as HttpClient from 'effect/http/HttpClient';
 import Stack from '../alchemy.run';
@@ -10,15 +11,16 @@ const { test, beforeAll, deploy } = Test.make({ providers: Cloudflare.providers(
 
 const stack = beforeAll(deploy(Stack));
 
-// a new path per run, since local Durable Object storage outlives the test
+// a new path per call, since local Durable Object storage outlives the test
 const streamUrlFor = (name: string) =>
     Effect.gen(function* () {
         const { url } = yield* stack;
         if (url === undefined) {
             return yield* Effect.die('The Worker has no URL: it needs workers.dev or a domain');
         }
-        const runId = yield* Clock.currentTimeMillis;
-        return `${url.replace(/\/+$/, '')}/${name}-${runId}`;
+        const millis = yield* Clock.currentTimeMillis;
+        const suffix = yield* Random.nextIntBetween(0, 1_000_000);
+        return `${url.replace(/\/+$/, '')}/${name}-${millis}-${suffix}`;
     });
 
 test(
@@ -93,4 +95,49 @@ test(
         expect(waitedMillis).toBeLessThan(10_000);
     }),
     { timeout: 60_000 },
+);
+
+// a few small binary appends per run; every run is several HTTP calls, so keep runs low
+const AppendBodies = Schema.Array(Schema.Uint8Array.check(Schema.isMinLength(1))).check(
+    Schema.isMaxLength(6),
+);
+
+test(
+    'a read returns every appended body, joined in order',
+    Effect.gen(function* () {
+        const result = yield* Arbitrary.checkEffect(
+            Arbitrary.schema(AppendBodies),
+            (bodies) =>
+                Effect.gen(function* () {
+                    const streamUrl = yield* streamUrlFor('appends');
+                    const created = yield* HttpClient.put(streamUrl, {
+                        body: HttpBody.uint8Array(new Uint8Array(), 'application/octet-stream'),
+                    });
+                    const appends = yield* Effect.forEach(bodies, (body) =>
+                        HttpClient.post(streamUrl, {
+                            body: HttpBody.uint8Array(body, 'application/octet-stream'),
+                        }),
+                    );
+                    const read = yield* HttpClient.get(`${streamUrl}?offset=-1`);
+                    const readBytes = new Uint8Array(yield* read.arrayBuffer);
+                    const appendedBytes = new Uint8Array(
+                        Arr.flatMap(bodies, (body) => Arr.fromIterable(body)),
+                    );
+                    const lastNextOffset = Arr.last(appends).pipe(
+                        Option.map((append) => append.headers['stream-next-offset']),
+                        Option.getOrElse(() => created.headers['stream-next-offset']),
+                    );
+                    return (
+                        created.status === 201 &&
+                        Arr.every(appends, (append) => append.status === 204) &&
+                        read.status === 200 &&
+                        Base64.encode(readBytes) === Base64.encode(appendedBytes) &&
+                        read.headers['stream-next-offset'] === lastNextOffset
+                    );
+                }),
+            { runs: 5 },
+        );
+        expect(Arbitrary.formatCheckFailure(result)).toBeUndefined();
+    }),
+    { timeout: 120_000 },
 );
