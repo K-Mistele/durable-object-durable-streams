@@ -5,6 +5,7 @@
  */
 import { Array as Arr, type Duration, Effect, Match, Option, Stream } from 'effect';
 import * as HttpServerResponse from 'effect/http/HttpServerResponse';
+import { Sse } from 'effect/encoding';
 import { HttpApiSchema } from 'effect/http-api';
 import { LongPollNoContent, NotModified } from '@kylelayer/effect-durable-streams-protocol/api';
 import type {
@@ -17,7 +18,6 @@ import { cursorFor } from '@kylelayer/effect-durable-streams-protocol/cursor';
 import { etagFor } from '@kylelayer/effect-durable-streams-protocol/etag';
 import {
     isBase64,
-    renderSseEvent,
     sseBinaryDataEvent,
     sseControlEvent,
     sseDataEvent,
@@ -257,7 +257,7 @@ export const respondToSseRead = ({
                 StreamNotFoundError: () => Stream.empty,
                 StreamGoneError: () => Stream.empty,
             }),
-            Stream.map(renderSseEvent),
+            Stream.map((event) => Sse.encoder.write(event)),
             Stream.encodeText,
             Stream.orDie,
         );
