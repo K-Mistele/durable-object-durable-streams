@@ -50,6 +50,7 @@ export const StreamsHandlers = HttpApiBuilder.group(DurableStreamsApi, 'streams'
                     const stream = streamPathOf(params);
                     const body = yield* readRequestBody({
                         request,
+                        contentLength: headers['content-length'],
                         maxBytes: settings.maxAppendBytes,
                     });
                     const createRequest = yield* parseCreateStreamRequest({ headers, body });
@@ -83,6 +84,7 @@ export const StreamsHandlers = HttpApiBuilder.group(DurableStreamsApi, 'streams'
                     const stream = streamPathOf(params);
                     const body = yield* readRequestBody({
                         request,
+                        contentLength: headers['content-length'],
                         maxBytes: settings.maxAppendBytes,
                     });
                     const appendRequest = yield* parseAppendRequest({ headers, body });

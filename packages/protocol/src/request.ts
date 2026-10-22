@@ -14,6 +14,7 @@ import {
 
 export const CreateStreamRequestHeaders = Schema.Struct({
     'content-type': Schema.optionalKey(Schema.String),
+    'content-length': Schema.optionalKey(NonNegativeIntFromString),
     'stream-ttl': Schema.optionalKey(TtlSeconds),
     'stream-expires-at': Schema.optionalKey(Schema.DateTimeUtcFromString),
     'stream-closed': Schema.optionalKey(TrueFlag),
@@ -44,6 +45,7 @@ export type CreateStreamRequestHeaders = typeof CreateStreamRequestHeaders.Type;
 
 export const AppendStreamRequestHeaders = Schema.Struct({
     'content-type': Schema.optionalKey(Schema.String),
+    'content-length': Schema.optionalKey(NonNegativeIntFromString),
     'stream-seq': Schema.optionalKey(StreamSeq),
     'stream-closed': Schema.optionalKey(TrueFlag),
     'producer-id': Schema.optionalKey(ProducerId),

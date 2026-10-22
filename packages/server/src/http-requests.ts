@@ -28,14 +28,16 @@ export const streamPathOf = (params: { readonly '*': string }): StreamPath =>
  */
 export const readRequestBody = ({
     request,
+    contentLength,
     maxBytes,
 }: {
     readonly request: HttpServerRequest;
+    /** The decoded Content-Length header; absent on a chunked body. */
+    readonly contentLength: number | undefined;
     readonly maxBytes: number;
 }): Effect.Effect<Uint8Array, PayloadTooLargeError> =>
     Effect.gen(function* () {
-        const declaredLength = Number(request.headers['content-length'] ?? 0);
-        if (declaredLength > maxBytes) {
+        if (contentLength !== undefined && contentLength > maxBytes) {
             return yield* PayloadTooLargeError.make({});
         }
         const buffer = yield* Effect.orDie(request.arrayBuffer);
