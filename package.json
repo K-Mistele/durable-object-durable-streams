@@ -46,6 +46,7 @@
         "node": ">=22.18.0"
     },
     "catalog": {
+        "@effect/platform-node": "4.0.5",
         "@effect/sql-pglite": "4.0.5",
         "@effect/sql-sqlite-do": "4.0.5",
         "@effect/sql-sqlite-node": "4.0.5",

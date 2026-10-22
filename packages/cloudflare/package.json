@@ -15,6 +15,7 @@
         "effect": "catalog:"
     },
     "devDependencies": {
+        "@effect/platform-node": "catalog:",
         "@effect/vitest": "catalog:",
         "vite-plus": "catalog:"
     }

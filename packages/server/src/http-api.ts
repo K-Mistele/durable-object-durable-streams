@@ -23,7 +23,7 @@ import {
     readRequestBody,
     streamPathOf,
 } from './http-requests';
-import { respondToCatchUpRead, respondToLongPollRead, respondToSseRead } from './read-responses';
+import { layerReadResponses, ReadResponses } from './read-responses';
 import { Streams } from './streams';
 
 /** engine-design.md decision 21. The conformance run sets the long-poll timeout to 2s. */
@@ -43,6 +43,8 @@ export const StreamsHandlers = HttpApiBuilder.group(DurableStreamsApi, 'streams'
     Effect.gen(function* () {
         const settings = yield* HttpSettings;
         const streams = yield* Streams;
+        const { respondToCatchUpRead, respondToLongPollRead, respondToSseRead } =
+            yield* ReadResponses;
 
         return handlers
             .handle('createStream', ({ params, headers, request }) =>
@@ -227,7 +229,7 @@ const layerSecurityHeaders = HttpRouter.middleware(
 /** The whole HTTP API: handlers, CORS and security headers. Needs `Streams` and the HTTP platform. */
 export const layerDurableStreamsHttpApi = HttpApiBuilder.layer(DurableStreamsApi).pipe(
     Layer.provide([
-        StreamsHandlers,
+        StreamsHandlers.pipe(Layer.provide(layerReadResponses)),
         layerSecurityHeaders,
         HttpRouter.cors({
             allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS'],

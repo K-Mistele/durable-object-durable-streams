@@ -34,3 +34,6 @@ dist-ssr
 
 # Riptide artifacts (cloud-synced)
 .humanlayer/tasks/
+
+# Alchemy local state, bundles and logs
+.alchemy/
