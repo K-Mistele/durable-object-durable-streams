@@ -249,6 +249,32 @@ describe('rejectStreamSeqRegression', () => {
             yield* rejectStreamSeqRegression({ stream: seenB, streamSeq: Option.none() });
         }),
     );
+
+    // PROTOCOL.md 5.2: byte-wise order. In UTF-8 the emoji (F0 9F…) sorts after U+FF61 (EF BD A1);
+    // in UTF-16 code units it sorts before (D83D < FF61)
+    it.effect('compares Stream-Seq values by their UTF-8 bytes', () =>
+        Effect.gen(function* () {
+            const seenHalfwidthStop = {
+                ...openStream,
+                lastStreamSeq: Option.some(StreamSeq.make('\uff61')),
+            };
+            yield* rejectStreamSeqRegression({
+                stream: seenHalfwidthStop,
+                streamSeq: Option.some(StreamSeq.make('\u{1F600}')),
+            });
+            const seenEmoji = {
+                ...openStream,
+                lastStreamSeq: Option.some(StreamSeq.make('\u{1F600}')),
+            };
+            const error = yield* Effect.flip(
+                rejectStreamSeqRegression({
+                    stream: seenEmoji,
+                    streamSeq: Option.some(StreamSeq.make('\uff61')),
+                }),
+            );
+            expect(error).toBeInstanceOf(StreamSeqConflictError);
+        }),
+    );
 });
 
 describe('updateStreamForAppend', () => {

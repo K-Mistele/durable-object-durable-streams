@@ -4,11 +4,12 @@
  * `StreamOperations` runs them inside the storage transaction with one `now` per request, so the
  * expiry check and the timestamps it writes agree.
  */
-import { Data, DateTime, Effect, Equivalence, Match, Option } from 'effect';
+import { Data, DateTime, Effect, Equivalence, Match, Option, Order } from 'effect';
 import {
     mediaTypeOf,
     type ProducerSeq,
     type StreamSeq,
+    StreamSeqOrder,
 } from '@kylelayer/effect-durable-streams-protocol/codec';
 import {
     ContentTypeMismatchError,
@@ -222,7 +223,9 @@ export const rejectStreamSeqRegression = ({
     readonly streamSeq: Option.Option<StreamSeq>;
 }): Effect.Effect<void, StreamSeqConflictError> => {
     const isRegression = Option.exists(streamSeq, (seq) =>
-        Option.exists(stream.lastStreamSeq, (lastSeq) => seq <= lastSeq),
+        Option.exists(stream.lastStreamSeq, (lastSeq) =>
+            Order.isLessThanOrEqualTo(StreamSeqOrder)(seq, lastSeq),
+        ),
     );
     if (isRegression) {
         return Effect.fail(StreamSeqConflictError.make({}));

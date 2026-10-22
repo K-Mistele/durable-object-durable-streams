@@ -1,4 +1,4 @@
-import { Schema, SchemaGetter } from 'effect';
+import { Array as Arr, Order, Schema, SchemaGetter } from 'effect';
 
 // Offset = number of messages in the stream up to this point.
 // The wire keeps upstream's "<16 digits>_<16 digits>" shape (the conformance suite sends
@@ -41,6 +41,17 @@ export type ProducerId = typeof ProducerId.Type;
 
 export const StreamSeq = Schema.NonEmptyString.pipe(Schema.brand('StreamSeq'));
 export type StreamSeq = typeof StreamSeq.Type;
+
+const textEncoder = new TextEncoder();
+
+/**
+ * PROTOCOL.md 5.2: `Stream-Seq` values compare byte-wise. JS `<` compares UTF-16 code units, which
+ * differs for characters above U+FFFF against U+E000–U+FFFF, so compare the UTF-8 bytes.
+ */
+export const StreamSeqOrder: Order.Order<StreamSeq> = Order.mapInput(
+    Arr.makeOrder(Order.Number),
+    (seq: StreamSeq) => Arr.fromIterable(textEncoder.encode(seq)),
+);
 
 export const TtlSeconds = NonNegativeIntFromString;
 export type TtlSeconds = typeof TtlSeconds.Type;
