@@ -26,6 +26,7 @@ import {
     CreateStreamResult,
     EmptyRequest,
     ReadBodyRequest,
+    ReadSseEventsRequest,
     ReadRange,
     StartReadRequest,
     StreamMetadata,
@@ -56,6 +57,9 @@ export type EncodedStreamOperations = {
     ) => Effect.Effect<typeof ReadRange.Encoded, MissingStreamError>;
     readonly readBody: (
         request: typeof ReadBodyRequest.Encoded,
+    ) => Stream.Stream<Uint8Array, StreamNotFoundError>;
+    readonly readSseEvents: (
+        request: typeof ReadSseEventsRequest.Encoded,
     ) => Stream.Stream<Uint8Array, StreamNotFoundError>;
     readonly waitForNewMessages: (
         request: typeof WaitForNewMessagesRequest.Encoded,
@@ -153,6 +157,12 @@ export const StreamObjectLive = StreamObject.make(
                     Schema.decodeEffect(ReadBodyRequest)(encoded).pipe(
                         Effect.orDie,
                         Effect.map(operations.readBody),
+                        Stream.unwrap,
+                    ),
+                readSseEvents: (encoded: typeof ReadSseEventsRequest.Encoded) =>
+                    Schema.decodeEffect(ReadSseEventsRequest)(encoded).pipe(
+                        Effect.orDie,
+                        Effect.map(operations.readSseEvents),
                         Stream.unwrap,
                     ),
                 waitForNewMessages: serveEncoded({

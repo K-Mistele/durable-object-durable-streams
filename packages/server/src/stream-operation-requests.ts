@@ -7,6 +7,7 @@
  */
 import { Schema } from 'effect';
 import {
+    Cursor,
     Offset,
     OffsetParam,
     ProducerSeq,
@@ -97,6 +98,19 @@ export const ReadBodyRequest = Schema.Struct({
     generation: Schema.Int,
 });
 export type ReadBodyRequest = typeof ReadBodyRequest.Type;
+
+/**
+ * SSE: a `ReadRange` as SSE text. `closed` and `cursor` fill the control events: `closed` is the
+ * range's, so the last control event says streamClosed exactly when the handler stops reading.
+ */
+export const ReadSseEventsRequest = Schema.Struct({
+    from: Offset,
+    to: Offset,
+    generation: Schema.Int,
+    closed: Schema.Boolean,
+    cursor: Cursor,
+});
+export type ReadSseEventsRequest = typeof ReadSseEventsRequest.Type;
 
 /** Long-poll and SSE: wait until a message lands after `after`, the stream closes, or `timeout` passes. */
 export const WaitForNewMessagesRequest = Schema.Struct({

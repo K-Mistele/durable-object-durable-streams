@@ -13,6 +13,7 @@ import type {
     CreateStreamResult,
     ReadBodyRequest,
     ReadRange,
+    ReadSseEventsRequest,
     StartReadRequest,
     StreamMetadata,
     WaitForNewMessagesRequest,
@@ -44,6 +45,9 @@ export class Streams extends Context.Service<
         ) => Effect.Effect<ReadRange, MissingStreamError>;
         readonly readBody: (
             request: ReadBodyRequest & StreamTarget,
+        ) => Stream.Stream<Uint8Array, StreamNotFoundError>;
+        readonly readSseEvents: (
+            request: ReadSseEventsRequest & StreamTarget,
         ) => Stream.Stream<Uint8Array, StreamNotFoundError>;
         readonly waitForNewMessages: (
             request: WaitForNewMessagesRequest & StreamTarget,

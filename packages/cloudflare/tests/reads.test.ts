@@ -2,7 +2,19 @@ import { expect } from '@effect/vitest';
 import * as Cloudflare from 'alchemy/Cloudflare';
 import * as Test from 'alchemy/Test/Vitest';
 import { Buffer } from 'node:buffer';
-import { Array as Arr, Clock, Duration, Effect, Fiber, Option, Random, Stream } from 'effect';
+import {
+    Array as Arr,
+    Clock,
+    Duration,
+    Effect,
+    Fiber,
+    Option,
+    Random,
+    Schema,
+    Stream,
+} from 'effect';
+import { Offset } from '@kylelayer/effect-durable-streams-protocol/codec';
+import { SseControl } from '@kylelayer/effect-durable-streams-protocol/sse';
 import * as HttpBody from 'effect/http/HttpBody';
 import * as HttpClient from 'effect/http/HttpClient';
 import Stack from '../alchemy.run';
@@ -174,6 +186,119 @@ test(
 
         expect(appended.status).toBe(204);
         expect(yield* read.json).toEqual(items);
+    }),
+    { timeout: 60_000 },
+);
+
+const closeStream = (streamUrl: string) =>
+    HttpClient.post(streamUrl, { headers: { 'stream-closed': 'true' } }).pipe(
+        Effect.map((response) => response.status),
+    );
+
+/** A closed stream's whole SSE response, as its events: `data` is the event's data lines joined by LF. */
+const readSseEvents = (streamUrl: string) =>
+    HttpClient.get(`${streamUrl}?offset=-1&live=sse`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.map((text) =>
+            Arr.map(
+                Arr.filter(text.split('\n\n'), (block) => block.length > 0),
+                (block) => {
+                    const lines = block.split('\n');
+                    const dataLines = Arr.filter(lines, (line) => line.startsWith('data:'));
+                    return {
+                        event: lines[0]?.replace(/^event: ?/, ''),
+                        data: Arr.join(
+                            Arr.map(dataLines, (line) => line.replace(/^data: ?/, '')),
+                            '\n',
+                        ),
+                    };
+                },
+            ),
+        ),
+    );
+
+const decodeControl = Schema.decodeUnknownEffect(Schema.fromJsonString(SseControl));
+const decodeJsonItems = Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Schema.Array(Schema.String)),
+);
+
+test(
+    'SSE sends a message larger than one event whole, in one data event',
+    Effect.gen(function* () {
+        const streamUrl = yield* streamUrlFor('sse-large-message');
+        yield* createStream({ streamUrl, contentType: 'application/octet-stream' });
+        // 10MB: ten 1MB parts, more than one event's 4MB
+        const message = Uint8Array.from({ length: 10 * 1024 * 1024 }, (_, i) => i % 251);
+        const appended = yield* appendBytes({ streamUrl, bytes: message });
+        const closed = yield* closeStream(streamUrl);
+
+        const events = yield* readSseEvents(streamUrl);
+
+        expect(appended).toBe(204);
+        expect(closed).toBe(204);
+        expect(Arr.map(events, (event) => event.event)).toEqual(['data', 'control']);
+        expect(Buffer.compare(Buffer.from(events[0]?.data ?? '', 'base64'), message)).toBe(0);
+        const control = yield* decodeControl(events[1]?.data);
+        expect(control.streamClosed).toBe(true);
+    }),
+    { timeout: 60_000 },
+);
+
+test(
+    'SSE sends many small messages as several data events, each followed by its control event',
+    Effect.gen(function* () {
+        const streamUrl = yield* streamUrlFor('sse-small-messages');
+        yield* createStream({ streamUrl, contentType: 'application/json' });
+        // 6,000 messages of about 1KB: two events of about 4MB and 2MB
+        const items = Arr.map(Arr.range(0, 5_999), (index) => `${index}`.padEnd(1_000, '.'));
+        const statuses = yield* Effect.forEach(Arr.chunksOf(items, 2_000), (batch) =>
+            HttpClient.post(streamUrl, { body: HttpBody.jsonUnsafe(batch) }).pipe(
+                Effect.map((response) => response.status),
+            ),
+        );
+        yield* closeStream(streamUrl);
+
+        const events = yield* readSseEvents(streamUrl);
+        const dataEvents = Arr.filter(events, (event) => event.event === 'data');
+        const controls = yield* Effect.forEach(
+            Arr.filter(events, (event) => event.event === 'control'),
+            (event) => decodeControl(event.data),
+        );
+        const received = yield* Effect.forEach(dataEvents, (event) => decodeJsonItems(event.data));
+
+        expect(Arr.every(statuses, (status) => status === 204)).toBe(true);
+        expect(dataEvents.length).toBeGreaterThan(1);
+        // data, control, data, control, …
+        expect(Arr.map(events, (event) => event.event)).toEqual(
+            Arr.flatMap(dataEvents, () => ['data', 'control']),
+        );
+        expect(Arr.flatten(received)).toEqual(items);
+        // each control points just past its event's messages; only the last says closed
+        const ends = Arr.scan(received, 0, (end, eventItems) => end + eventItems.length).slice(1);
+        expect(Arr.map(controls, (control) => control.streamNextOffset)).toEqual(
+            Arr.map(ends, (end) => Offset.make(end)),
+        );
+        expect(Arr.map(controls, (control) => control.streamClosed === true)).toEqual(
+            Arr.map(ends, (_, index) => index === ends.length - 1),
+        );
+    }),
+    { timeout: 120_000 },
+);
+
+test(
+    'SSE turns a CRLF cut between two stored parts into one line break',
+    Effect.gen(function* () {
+        const streamUrl = yield* streamUrlFor('sse-crlf-parts');
+        yield* createStream({ streamUrl, contentType: 'text/plain' });
+        // the first 1MB part ends with CR, the second starts with LF
+        const text = `${'a'.repeat(1024 * 1024 - 1)}\r\nb`;
+        yield* HttpClient.post(streamUrl, { body: HttpBody.text(text, 'text/plain') });
+        yield* closeStream(streamUrl);
+
+        const events = yield* readSseEvents(streamUrl);
+
+        expect(Arr.map(events, (event) => event.event)).toEqual(['data', 'control']);
+        expect(events[0]?.data).toBe(`${'a'.repeat(1024 * 1024 - 1)}\nb`);
     }),
     { timeout: 60_000 },
 );

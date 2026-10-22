@@ -10,6 +10,7 @@ import {
     CreateStreamResult,
     EmptyRequest,
     ReadBodyRequest,
+    ReadSseEventsRequest,
     ReadRange,
     StartReadRequest,
     StreamMetadata,
@@ -85,6 +86,15 @@ export const layerDurableObject = Layer.effect(
                 Schema.encodeEffect(ReadBodyRequest)(request).pipe(
                     Effect.orDie,
                     Effect.map((encoded) => objects.getByName(request.stream).readBody(encoded)),
+                    Stream.unwrap,
+                ),
+            // SSE text crosses as bytes, the same way
+            readSseEvents: (request) =>
+                Schema.encodeEffect(ReadSseEventsRequest)(request).pipe(
+                    Effect.orDie,
+                    Effect.map((encoded) =>
+                        objects.getByName(request.stream).readSseEvents(encoded),
+                    ),
                     Stream.unwrap,
                 ),
             waitForNewMessages: (request) =>

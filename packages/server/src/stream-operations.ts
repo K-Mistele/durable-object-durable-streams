@@ -12,10 +12,21 @@ import {
     type StreamGoneError,
     StreamNotFoundError,
 } from '@kylelayer/effect-durable-streams-protocol/errors';
+import { joinBytes } from '@kylelayer/effect-durable-streams-protocol/bytes';
 import { jsonMessages } from '@kylelayer/effect-durable-streams-protocol/json';
 import { zero } from '@kylelayer/effect-durable-streams-protocol/offset';
 import type { ProducerState } from '@kylelayer/effect-durable-streams-protocol/producer';
-import type { StoredStream } from './stored-stream';
+import {
+    closeSseDataEvent,
+    openSseDataEvent,
+    type SseControl,
+    type SseDataEvent,
+    sseControlEvent,
+    sseDataEncodingFor,
+    startSseDataMessage,
+    writeSseData,
+} from '@kylelayer/effect-durable-streams-protocol/sse';
+import type { StoredChunk, StoredStream } from './stored-stream';
 import {
     type AppendRequest,
     type AppendResult,
@@ -24,6 +35,7 @@ import {
     type EmptyRequest,
     type ReadBodyRequest,
     type ReadRange,
+    type ReadSseEventsRequest,
     type StartReadRequest,
     type StreamMetadata,
     type WaitForNewMessagesRequest,
@@ -69,6 +81,13 @@ export type StreamOperations = {
     readonly startRead: (request: StartReadRequest) => Effect.Effect<ReadRange, MissingStreamError>;
     /** The response body: JSON as one array, other content types as stored bytes. */
     readonly readBody: (request: ReadBodyRequest) => Stream.Stream<Uint8Array, StreamNotFoundError>;
+    /**
+     * SSE: the range as data events of about `sseEventBytes` each, every one ending at a message
+     * boundary and followed by its control event (engine-design.md, SSE).
+     */
+    readonly readSseEvents: (
+        request: ReadSseEventsRequest,
+    ) => Stream.Stream<Uint8Array, StreamNotFoundError>;
     readonly waitForNewMessages: (
         request: WaitForNewMessagesRequest,
     ) => Effect.Effect<WaitResult, MissingStreamError>;
@@ -295,6 +314,21 @@ const openBracket = textEncoder.encode('[');
 const comma = textEncoder.encode(',');
 const closeBracket = textEncoder.encode(']');
 
+/** A data event ends at the first message boundary once it holds this much. */
+const sseEventBytes = 4 * 1024 * 1024;
+
+/** `readSseEvents` between rows: the data event being written, if any, and its size so far. */
+type SseEventsState = {
+    readonly event: Option.Option<SseDataEvent>;
+    readonly eventBytes: number;
+};
+
+/**
+ * What one row adds to the SSE text: bytes, and control events still to be encoded. One row's
+ * output goes out as one chunk, so a data event's end and its control event stay together.
+ */
+type SseOutput = ReadonlyArray<Uint8Array | SseControl>;
+
 /** Builds the operations of the stream at `stream`, loading its state for its waiters. */
 export const makeStreamOperations = Effect.fn('makeStreamOperations')(function* (input: {
     readonly stream: StreamPath;
@@ -316,6 +350,20 @@ export const makeStreamOperations = Effect.fn('makeStreamOperations')(function* 
         const stored = yield* storage.loadStream({ stream });
         return yield* getExistingStream({ stored, now: yield* DateTime.now });
     });
+
+    // a read fails before sending anything if the stream was deleted or re-created since startRead
+    const loadSameGeneration = (generation: number) =>
+        Effect.gen(function* () {
+            const stored = yield* storage.loadStream({ stream });
+            const sameGeneration = Option.filter(
+                stored,
+                (candidate) => candidate.generation === generation,
+            );
+            if (Option.isNone(sameGeneration)) {
+                return yield* StreamNotFoundError.make({});
+            }
+            return sameGeneration.value;
+        });
 
     const operations: StreamOperations = {
         createStream: (request) =>
@@ -372,16 +420,9 @@ export const makeStreamOperations = Effect.fn('makeStreamOperations')(function* 
         readBody: ({ from, to, generation }) =>
             Stream.unwrap(
                 Effect.gen(function* () {
-                    const stored = yield* storage.loadStream({ stream });
-                    const sameGeneration = Option.filter(
-                        stored,
-                        (candidate) => candidate.generation === generation,
-                    );
-                    if (Option.isNone(sameGeneration)) {
-                        return yield* StreamNotFoundError.make({});
-                    }
+                    const existing = yield* loadSameGeneration(generation);
                     const chunks = storage.readChunks({ stream, from, to, generation });
-                    if (!isJsonContentType(sameGeneration.value.contentType)) {
+                    if (!isJsonContentType(existing.contentType)) {
                         return Stream.map(chunks, (chunk) => chunk.bytes);
                     }
                     // a comma before each message after the first; parts after 0 continue a message
@@ -394,6 +435,78 @@ export const makeStreamOperations = Effect.fn('makeStreamOperations')(function* 
                     return Stream.make(openBracket).pipe(
                         Stream.concat(items),
                         Stream.concat(Stream.make(closeBracket)),
+                    );
+                }),
+            ),
+
+        readSseEvents: ({ from, to, generation, closed, cursor }) =>
+            Stream.unwrap(
+                Effect.gen(function* () {
+                    const existing = yield* loadSameGeneration(generation);
+                    const encoding = sseDataEncodingFor(existing.contentType);
+                    // a control event mid-read points at the next message; the last one at `to`
+                    const controlBefore = (offset: Offset): SseControl => ({
+                        streamNextOffset: offset,
+                        streamCursor: cursor,
+                    });
+                    const lastControl: SseControl = closed
+                        ? { streamNextOffset: to, streamClosed: true }
+                        : { streamNextOffset: to, streamCursor: cursor, upToDate: true };
+
+                    const writeChunk = (
+                        state: SseEventsState,
+                        chunk: StoredChunk,
+                    ): readonly [SseEventsState, ReadonlyArray<SseOutput>] => {
+                        const output: Array<Uint8Array | SseControl> = [];
+                        const startsMessage = chunk.part === 0;
+                        // a full event ends here, between two messages
+                        const endsEvent = startsMessage && state.eventBytes >= sseEventBytes;
+                        const continuing = endsEvent ? Option.none() : state.event;
+                        if (Option.isSome(state.event) && Option.isNone(continuing)) {
+                            output.push(
+                                closeSseDataEvent(state.event.value),
+                                controlBefore(chunk.offset),
+                            );
+                        }
+                        const [opened, openText] = Option.match(continuing, {
+                            onNone: () => openSseDataEvent(encoding),
+                            onSome: (event) => [event, new Uint8Array(0)] as const,
+                        });
+                        const [started, separator] = startsMessage
+                            ? startSseDataMessage(opened)
+                            : ([opened, new Uint8Array(0)] as const);
+                        const [written, data] = writeSseData(started, chunk.bytes);
+                        output.push(openText, separator, data);
+                        const eventBytes = Option.isSome(continuing) ? state.eventBytes : 0;
+                        return [
+                            {
+                                event: Option.some(written),
+                                eventBytes: eventBytes + chunk.bytes.byteLength,
+                            },
+                            [output],
+                        ];
+                    };
+
+                    const finish = (state: SseEventsState): ReadonlyArray<SseOutput> => [
+                        Option.match(state.event, {
+                            onNone: () => [lastControl],
+                            onSome: (event) => [closeSseDataEvent(event), lastControl],
+                        }),
+                    ];
+
+                    return storage.readChunks({ stream, from, to, generation }).pipe(
+                        Stream.mapAccum(
+                            (): SseEventsState => ({ event: Option.none(), eventBytes: 0 }),
+                            writeChunk,
+                            { onHalt: finish },
+                        ),
+                        Stream.mapEffect((output) =>
+                            Effect.forEach(output, (piece) =>
+                                piece instanceof Uint8Array
+                                    ? Effect.succeed(piece)
+                                    : sseControlEvent(piece).pipe(Effect.orDie),
+                            ).pipe(Effect.map(joinBytes)),
+                        ),
                     );
                 }),
             ),
