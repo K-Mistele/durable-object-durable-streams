@@ -12,7 +12,8 @@
         "check": "vp check && bun run typed:check",
         "typed:check": "tsx tools/typed-lint/src/cli.ts check",
         "test": "vp run -r test",
-        "ready": "bun run check && bun run test",
+        "test:conformance": "bun run --cwd packages/cloudflare test:conformance",
+        "ready": "bun run check && bun run test && bun run test:conformance",
         "prepare": "effect-tsgo patch --oxlint"
     },
     "dependencies": {

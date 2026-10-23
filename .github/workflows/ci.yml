@@ -10,6 +10,8 @@ concurrency:
     group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
     cancel-in-progress: true
 
+# Three jobs, run at once. The Cloudflare tests and the conformance suite run the Stack in
+# workerd (alchemy dev), so they need no Cloudflare account.
 jobs:
     check:
         name: Format, lint and types
@@ -24,39 +26,12 @@ jobs:
               with:
                   node-version: 24
             - run: bun install --frozen-lockfile
-            # vp check (format, oxlint, types) and typed-lint
             - run: bun run check
 
-    # Each entry is its own job on its own runner, so they all run at once. Locally the
-    # Cloudflare files run one at a time (fileParallelism: false), since each deploys the same
-    # Stack on the same port; separate runners don't share a port. The Cloudflare tests run the
-    # Stack in workerd (alchemy dev) and need no Cloudflare account.
     test:
-        name: ${{ matrix.name }}
+        name: Tests
         runs-on: ubuntu-latest
         timeout-minutes: 20
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - name: Protocol tests
-                      directory: packages/protocol
-                      files: ''
-                    - name: Server tests
-                      directory: packages/server
-                      files: ''
-                    - name: Conformance suite
-                      directory: packages/cloudflare
-                      files: tests/conformance.test.ts
-                    - name: Cloudflare round-trip tests
-                      directory: packages/cloudflare
-                      files: tests/round-trip.test.ts
-                    - name: Cloudflare read tests
-                      directory: packages/cloudflare
-                      files: tests/reads.test.ts
-                    - name: Cloudflare fork and expiry tests
-                      directory: packages/cloudflare
-                      files: tests/forks.test.ts
         steps:
             - uses: actions/checkout@v4
             - uses: oven-sh/setup-bun@v2
@@ -66,23 +41,19 @@ jobs:
               with:
                   node-version: 24
             - run: bun install --frozen-lockfile
-            - run: bun run test ${{ matrix.files }}
-              working-directory: ${{ matrix.directory }}
+            - run: bun run test
 
-    # a new Cloudflare test file must be added to the matrix above, or it never runs in CI
-    test-files-listed:
-        name: Every Cloudflare test file is in CI
+    conformance:
+        name: Conformance suite
         runs-on: ubuntu-latest
-        timeout-minutes: 5
+        timeout-minutes: 20
         steps:
             - uses: actions/checkout@v4
-            - run: |
-                  missing=0
-                  for file in packages/cloudflare/tests/*.test.ts; do
-                      relative="tests/$(basename "$file")"
-                      if ! grep -q "files: $relative" .github/workflows/ci.yml; then
-                          echo "::error file=$file::$relative is not in the test matrix in .github/workflows/ci.yml"
-                          missing=1
-                      fi
-                  done
-                  exit $missing
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: 1.4.0
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+            - run: bun install --frozen-lockfile
+            - run: bun run test:conformance
