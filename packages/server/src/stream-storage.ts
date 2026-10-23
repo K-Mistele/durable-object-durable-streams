@@ -9,7 +9,7 @@ import {
 } from '@kylelayer/effect-durable-streams-protocol/codec';
 import { StreamNotFoundError } from '@kylelayer/effect-durable-streams-protocol/errors';
 import type { ProducerState } from '@kylelayer/effect-durable-streams-protocol/producer';
-import { StoredChunk, StoredStream } from './stored-stream';
+import { ChunkKey, StoredChunk, StoredStream, StoredStreamColumns } from './stored-stream';
 import type { StoredAppendState } from './stream-rules';
 
 /** What one transaction saves: the stream's row, the producer's state, and one message per entry of `messages` from `firstMessageOffset`. */
@@ -48,13 +48,70 @@ export class StreamStorage extends Context.Service<
                 stored: StoredAppendState,
             ) => Effect.Effect<{ readonly changes: StreamChanges; readonly result: A }, E>;
         }) => Effect.Effect<A, E>;
-        /** Chunks with `from <= offset < to`, in order, a page at a time. Fails once the stream's generation is no longer `generation` (deleted or re-created). */
+        /**
+         * Chunks with `from <= offset < to` (and after `after`, if given), in order, a page at a
+         * time. Fails once the stream's generation is no longer `generation` (deleted or re-created).
+         */
         readonly readChunks: (input: {
             readonly stream: StreamPath;
             readonly from: Offset;
             readonly to: Offset;
+            readonly after: Option.Option<ChunkKey>;
             readonly generation: number;
         }) => Stream.Stream<StoredChunk, StreamNotFoundError>;
+        /** Runs `effect` as one transaction. For forks, whose steps don't fit `createStream` or `appendToStream`. */
+        readonly withTransaction: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
+        /** Deletes any old rows of the path, then inserts the stream's row. */
+        readonly insertStream: (input: {
+            readonly stream: StreamPath;
+            readonly storedStream: StoredStream;
+        }) => Effect.Effect<void>;
+        readonly updateStream: (input: {
+            readonly stream: StreamPath;
+            readonly storedStream: StoredStream;
+        }) => Effect.Effect<void>;
+        /** One message per entry, from `firstMessageOffset`, each cut into 1MB parts. */
+        readonly insertMessages: (input: {
+            readonly stream: StreamPath;
+            readonly firstMessageOffset: Offset;
+            readonly messages: ReadonlyArray<Uint8Array>;
+        }) => Effect.Effect<void>;
+        /** Chunk rows copied from a fork's source; a row already there is left as it is. */
+        readonly insertCopiedChunks: (input: {
+            readonly stream: StreamPath;
+            readonly chunks: ReadonlyArray<StoredChunk>;
+        }) => Effect.Effect<void>;
+        /** The length of the message at `offset`; None if there is none. */
+        readonly messageBytes: (input: {
+            readonly stream: StreamPath;
+            readonly offset: Offset;
+        }) => Effect.Effect<Option.Option<number>>;
+        /** The last chunk key before offset `before`: where a fork's copy stopped. */
+        readonly lastChunkKeyBefore: (input: {
+            readonly stream: StreamPath;
+            readonly before: Offset;
+        }) => Effect.Effect<Option.Option<ChunkKey>>;
+        /** Records `fork` as made from `stream`; recording it twice is harmless. */
+        readonly addFork: (input: {
+            readonly stream: StreamPath;
+            readonly fork: StreamPath;
+        }) => Effect.Effect<void>;
+        readonly removeFork: (input: {
+            readonly stream: StreamPath;
+            readonly fork: StreamPath;
+        }) => Effect.Effect<void>;
+        /** Saves (or replaces) a `removeFork` call still owed to `source`. */
+        readonly savePendingRelease: (input: {
+            readonly stream: StreamPath;
+            readonly release: PendingRelease;
+        }) => Effect.Effect<void>;
+        readonly loadPendingReleases: (input: {
+            readonly stream: StreamPath;
+        }) => Effect.Effect<ReadonlyArray<PendingRelease>>;
+        readonly deletePendingRelease: (input: {
+            readonly stream: StreamPath;
+            readonly source: StreamPath;
+        }) => Effect.Effect<void>;
         readonly recordAccess: (input: {
             readonly stream: StreamPath;
             readonly now: DateTime.Utc;
@@ -63,8 +120,17 @@ export class StreamStorage extends Context.Service<
     }
 >()('@kylelayer/effect-durable-streams-server/stream-storage/StreamStorage') {}
 
-/** DO SQLite caps a BLOB at 2MB. */
-const chunkBytes = 1024 * 1024;
+/** A `removeFork` call to `source` that failed, and when to try it again. */
+export const PendingRelease = Schema.Struct({
+    source: StreamPath,
+    attempts: Schema.Int,
+    /** Epoch milliseconds. */
+    dueAt: Schema.Int,
+});
+export type PendingRelease = typeof PendingRelease.Type;
+
+/** A message is stored in parts of this size, the last part shorter. DO SQLite caps a BLOB at 2MB. */
+export const chunkBytes = 1024 * 1024;
 
 /**
  * A read sends its rows in pages, each fetched when the reader asks for more. Between pages the
@@ -79,24 +145,31 @@ const pageRows = 4096;
 /** DO SQLite allows 100 bound parameters per query, and a chunk row binds 4. */
 const chunkRowsPerInsert = 25;
 
+const streamColumnNames = {
+    contentType: 'content_type',
+    closedBy: 'closed_by',
+    ttlSeconds: 'ttl_seconds',
+    expiresAt: 'expires_at',
+    createdAt: 'created_at',
+    lastAccessedAt: 'last_accessed_at',
+    lastStreamSeq: 'last_stream_seq',
+    softDeleted: 'soft_deleted',
+} as const;
+
+/** A `streams` row as loaded, with `has_forks` from the `forks` table. */
 const StreamRow = StoredStream.pipe(
-    Schema.encodeKeys({
-        contentType: 'content_type',
-        closedBy: 'closed_by',
-        ttlSeconds: 'ttl_seconds',
-        expiresAt: 'expires_at',
-        createdAt: 'created_at',
-        lastAccessedAt: 'last_accessed_at',
-        lastStreamSeq: 'last_stream_seq',
-    }),
+    Schema.encodeKeys({ ...streamColumnNames, hasForks: 'has_forks' }),
 );
+
+/** A `streams` row as saved: its columns only. */
+const StreamColumnsRow = StoredStreamColumns.pipe(Schema.encodeKeys(streamColumnNames));
+
+const PendingReleaseRow = PendingRelease.pipe(Schema.encodeKeys({ dueAt: 'due_at' }));
 
 const ChunkRow = StoredChunk.pipe(Schema.encodeKeys({ offset: 'msg_offset', bytes: 'data' }));
 
 /** A chunk row's key: each page of a read continues after the last key sent. */
-const ChunkKeyRow = Schema.Struct({ offset: Schema.toType(Offset), part: Schema.Int }).pipe(
-    Schema.encodeKeys({ offset: 'msg_offset' }),
-);
+const ChunkKeyRow = ChunkKey.pipe(Schema.encodeKeys({ offset: 'msg_offset' }));
 
 const ProducerRow = Schema.Struct({
     epoch: Schema.toType(ProducerEpoch),
@@ -116,7 +189,9 @@ export const layerSql = Layer.effect(
             Result: StreamRow,
             execute: (stream) =>
                 sql`SELECT generation, content_type, tail, closed, closed_by, ttl_seconds, expires_at,
-                        created_at, last_accessed_at, last_stream_seq
+                        created_at, last_accessed_at, last_stream_seq, fork, copy, soft_deleted,
+                        CASE WHEN EXISTS (SELECT 1 FROM forks WHERE forks.stream = streams.stream)
+                            THEN 1 ELSE 0 END AS has_forks
                     FROM streams WHERE stream = ${stream}
                     ${sql.onDialectOrElse({ pg: () => sql.literal('FOR UPDATE'), orElse: () => sql.literal('') })}`,
         });
@@ -193,6 +268,100 @@ export const layerSql = Layer.effect(
         const toBlobParameter = (bytes: Uint8Array<ArrayBuffer>) =>
             sql.onDialectOrElse({ sqlite: () => bytes.buffer, orElse: () => bytes });
 
+        const insertStreamRow = ({
+            stream,
+            storedStream,
+        }: {
+            readonly stream: StreamPath;
+            readonly storedStream: StoredStream;
+        }) =>
+            Effect.gen(function* () {
+                yield* deleteStreamRows(stream);
+                const row = yield* Schema.encodeEffect(StreamColumnsRow)(storedStream);
+                yield* sql`INSERT INTO streams ${sql.insert({ stream, ...row })}`;
+            });
+
+        const updateStreamRow = ({
+            stream,
+            storedStream,
+        }: {
+            readonly stream: StreamPath;
+            readonly storedStream: StoredStream;
+        }) =>
+            Effect.gen(function* () {
+                const row = yield* Schema.encodeEffect(StreamColumnsRow)(storedStream);
+                yield* sql`UPDATE streams SET ${sql.update(row)} WHERE stream = ${stream}`;
+            });
+
+        const insertChunkRows = ({
+            chunkRows,
+            ifMissing,
+        }: {
+            readonly chunkRows: ReadonlyArray<{
+                readonly stream: StreamPath;
+                readonly msg_offset: number;
+                readonly part: number;
+                readonly data: Uint8Array | ArrayBuffer;
+            }>;
+            readonly ifMissing: boolean;
+        }) =>
+            Effect.forEach(
+                Arr.chunksOf(chunkRows, chunkRowsPerInsert),
+                (batch) =>
+                    sql`INSERT INTO chunks ${sql.insert(batch)}
+                        ${ifMissing ? sql.literal('ON CONFLICT DO NOTHING') : sql.literal('')}`,
+                { discard: true },
+            );
+
+        const insertMessageRows = ({
+            stream,
+            firstMessageOffset,
+            messages,
+        }: {
+            readonly stream: StreamPath;
+            readonly firstMessageOffset: Offset;
+            readonly messages: ReadonlyArray<Uint8Array>;
+        }) =>
+            insertChunkRows({
+                chunkRows: Arr.flatMap(messages, (message, index) =>
+                    Arr.makeBy(Math.max(1, Math.ceil(message.length / chunkBytes)), (part) => ({
+                        stream,
+                        msg_offset: firstMessageOffset + index,
+                        part,
+                        data: toBlobParameter(
+                            message.slice(part * chunkBytes, (part + 1) * chunkBytes),
+                        ),
+                    })),
+                ),
+                ifMissing: false,
+            });
+
+        const selectMessageBytes = SqlSchema.findOneOption({
+            Request: Schema.Struct({ stream: StreamPath, offset: StoredOffset }),
+            // SUM over no rows is NULL: no message at `offset`
+            Result: Schema.Struct({ bytes: Schema.NullOr(Schema.Int) }),
+            execute: ({ stream, offset }) =>
+                sql`SELECT SUM(LENGTH(data)) AS bytes FROM chunks
+                    WHERE stream = ${stream} AND msg_offset = ${offset}`,
+        });
+
+        const selectLastChunkKeyBefore = SqlSchema.findOneOption({
+            Request: Schema.Struct({ stream: StreamPath, before: StoredOffset }),
+            Result: ChunkKeyRow,
+            execute: ({ stream, before }) =>
+                sql`SELECT msg_offset, part FROM chunks
+                    WHERE stream = ${stream} AND msg_offset < ${before}
+                    ORDER BY msg_offset DESC, part DESC
+                    LIMIT 1`,
+        });
+
+        const selectPendingReleases = SqlSchema.findAll({
+            Request: StreamPath,
+            Result: PendingReleaseRow,
+            execute: (stream) =>
+                sql`SELECT source, attempts, due_at FROM pending_releases WHERE stream = ${stream}`,
+        });
+
         // the caller saves the stream row; this saves the producer and the chunk rows
         const saveProducerAndChunks = ({
             stream,
@@ -207,21 +376,11 @@ export const layerSql = Layer.effect(
                     yield* sql`INSERT INTO producers ${sql.insert({ stream, id, epoch: state.epoch, last_seq: state.lastSeq })}
                         ON CONFLICT (stream, id) DO UPDATE SET epoch = excluded.epoch, last_seq = excluded.last_seq`;
                 }
-                const chunkRows = Arr.flatMap(changes.messages, (message, index) =>
-                    Arr.makeBy(Math.max(1, Math.ceil(message.length / chunkBytes)), (part) => ({
-                        stream,
-                        msg_offset: changes.firstMessageOffset + index,
-                        part,
-                        data: toBlobParameter(
-                            message.slice(part * chunkBytes, (part + 1) * chunkBytes),
-                        ),
-                    })),
-                );
-                yield* Effect.forEach(
-                    Arr.chunksOf(chunkRows, chunkRowsPerInsert),
-                    (batch) => sql`INSERT INTO chunks ${sql.insert(batch)}`,
-                    { discard: true },
-                );
+                yield* insertMessageRows({
+                    stream,
+                    firstMessageOffset: changes.firstMessageOffset,
+                    messages: changes.messages,
+                });
             });
 
         return StreamStorage.of({
@@ -235,11 +394,10 @@ export const layerSql = Layer.effect(
                             const { changes, result } = yield* computeChanges(stored);
                             if (Option.isSome(changes)) {
                                 yield* Effect.gen(function* () {
-                                    yield* deleteStreamRows(stream);
-                                    const row = yield* Schema.encodeEffect(StreamRow)(
-                                        changes.value.storedStream,
-                                    );
-                                    yield* sql`INSERT INTO streams ${sql.insert({ stream, ...row })}`;
+                                    yield* insertStreamRow({
+                                        stream,
+                                        storedStream: changes.value.storedStream,
+                                    });
                                     yield* saveProducerAndChunks({
                                         stream,
                                         changes: changes.value,
@@ -265,10 +423,10 @@ export const layerSql = Layer.effect(
                                 producer: storedProducer,
                             });
                             yield* Effect.gen(function* () {
-                                const row = yield* Schema.encodeEffect(StreamRow)(
-                                    changes.storedStream,
-                                );
-                                yield* sql`UPDATE streams SET ${sql.update(row)} WHERE stream = ${stream}`;
+                                yield* updateStreamRow({
+                                    stream,
+                                    storedStream: changes.storedStream,
+                                });
                                 yield* saveProducerAndChunks({ stream, changes });
                             }).pipe(Effect.orDie);
                             return result;
@@ -276,8 +434,8 @@ export const layerSql = Layer.effect(
                     )
                     .pipe(Effect.catchTag('SqlError', Effect.die)),
 
-            readChunks: ({ stream, from, to, generation }) =>
-                Stream.paginate(Option.none<typeof ChunkKeyRow.Type>(), (after) =>
+            readChunks: ({ stream, from, to, after: start, generation }) =>
+                Stream.paginate(start, (after) =>
                     Effect.gen(function* () {
                         const last = yield* selectPageEnd({ stream, from, to, after }).pipe(
                             Effect.orDie,
@@ -308,6 +466,63 @@ export const layerSql = Layer.effect(
 
             deleteStream: ({ stream }) =>
                 sql.withTransaction(deleteStreamRows(stream)).pipe(Effect.orDie),
+
+            withTransaction: (effect) =>
+                sql.withTransaction(effect).pipe(Effect.catchTag('SqlError', Effect.die)),
+
+            insertStream: (input) => insertStreamRow(input).pipe(Effect.orDie),
+
+            updateStream: (input) => updateStreamRow(input).pipe(Effect.orDie),
+
+            insertMessages: (input) => insertMessageRows(input).pipe(Effect.orDie),
+
+            insertCopiedChunks: ({ stream, chunks }) =>
+                insertChunkRows({
+                    chunkRows: Arr.map(chunks, (chunk) => ({
+                        stream,
+                        msg_offset: chunk.offset,
+                        part: chunk.part,
+                        data: toBlobParameter(chunk.bytes.slice()),
+                    })),
+                    ifMissing: true,
+                }).pipe(Effect.orDie),
+
+            messageBytes: ({ stream, offset }) =>
+                selectMessageBytes({ stream, offset }).pipe(
+                    Effect.map(Option.flatMap((row) => Option.fromNullOr(row.bytes))),
+                    Effect.orDie,
+                ),
+
+            lastChunkKeyBefore: ({ stream, before }) =>
+                selectLastChunkKeyBefore({ stream, before }).pipe(Effect.orDie),
+
+            addFork: ({ stream, fork }) =>
+                sql`INSERT INTO forks ${sql.insert({ stream, fork })} ON CONFLICT DO NOTHING`.pipe(
+                    Effect.orDie,
+                    Effect.andThen(Effect.void),
+                ),
+
+            removeFork: ({ stream, fork }) =>
+                sql`DELETE FROM forks WHERE stream = ${stream} AND fork = ${fork}`.pipe(
+                    Effect.orDie,
+                    Effect.andThen(Effect.void),
+                ),
+
+            savePendingRelease: ({ stream, release }) =>
+                Effect.gen(function* () {
+                    const row = yield* Schema.encodeEffect(PendingReleaseRow)(release);
+                    yield* sql`INSERT INTO pending_releases ${sql.insert({ stream, ...row })}
+                        ON CONFLICT (stream, source)
+                        DO UPDATE SET attempts = excluded.attempts, due_at = excluded.due_at`;
+                }).pipe(Effect.orDie),
+
+            loadPendingReleases: ({ stream }) => selectPendingReleases(stream).pipe(Effect.orDie),
+
+            deletePendingRelease: ({ stream, source }) =>
+                sql`DELETE FROM pending_releases WHERE stream = ${stream} AND source = ${source}`.pipe(
+                    Effect.orDie,
+                    Effect.andThen(Effect.void),
+                ),
         });
     }),
 );

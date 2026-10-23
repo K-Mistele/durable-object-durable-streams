@@ -3,12 +3,14 @@ import type { StreamPath } from '@kylelayer/effect-durable-streams-protocol/code
 import type { StreamNotFoundError } from '@kylelayer/effect-durable-streams-protocol/errors';
 import type {
     AppendToStreamError,
+    CreateForkError,
     CreateStreamError,
     MissingStreamError,
 } from './stream-operations';
 import type {
     AppendRequest,
     AppendResult,
+    CreateForkRequest,
     CreateStreamRequest,
     CreateStreamResult,
     ReadBodyRequest,
@@ -34,6 +36,10 @@ export class Streams extends Context.Service<
         readonly createStream: (
             request: CreateStreamRequest & StreamTarget,
         ) => Effect.Effect<CreateStreamResult, CreateStreamError>;
+        /** PUT with `Stream-Forked-From`: copies the source up to the fork point, then answers. */
+        readonly createFork: (
+            request: CreateForkRequest & StreamTarget,
+        ) => Effect.Effect<CreateStreamResult, CreateForkError>;
         readonly appendToStream: (
             request: AppendRequest & StreamTarget,
         ) => Effect.Effect<AppendResult, AppendToStreamError>;

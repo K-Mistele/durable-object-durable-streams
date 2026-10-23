@@ -2,7 +2,7 @@
  * The edge: request headers and body parsed into the `stream-operation-requests.ts` types. A
  * request that fits none of them fails here, with 400 or 413, and nothing past here re-checks it.
  */
-import { Effect, Option } from 'effect';
+import { Data, Effect, Option } from 'effect';
 import type { HttpServerRequest } from 'effect/http/HttpServerRequest';
 import { StreamPath } from '@kylelayer/effect-durable-streams-protocol/codec';
 import {
@@ -14,7 +14,11 @@ import type {
     CreateStreamRequestHeaders,
 } from '@kylelayer/effect-durable-streams-protocol/request';
 import type { ProducerRequestId } from './stored-stream';
-import { AppendRequest, type CreateStreamRequest } from './stream-operation-requests';
+import {
+    AppendRequest,
+    type CreateForkRequest,
+    type CreateStreamRequest,
+} from './stream-operation-requests';
 
 const defaultContentType = 'application/octet-stream';
 
@@ -47,27 +51,53 @@ export const readRequestBody = ({
         return new Uint8Array(buffer);
     });
 
-/** PUT. A missing or malformed Content-Type means `application/octet-stream`, as upstream. */
-export const parseCreateStreamRequest = ({
+/** The Content-Type header, if present and well formed. */
+const contentTypeOf = (headers: CreateStreamRequestHeaders): Option.Option<string> =>
+    Option.filter(Option.fromUndefinedOr(headers['content-type']), (contentType) =>
+        /^[\w-]+\/[\w-]+/.test(contentType),
+    );
+
+/** A PUT: a plain create, or a fork when it names a source (PROTOCOL.md 4.2). */
+export type ParsedCreateRequest = Data.TaggedEnum<{
+    CreateStream: { readonly request: CreateStreamRequest };
+    CreateFork: { readonly request: CreateForkRequest };
+}>;
+export const ParsedCreateRequest = Data.taggedEnum<ParsedCreateRequest>();
+
+/**
+ * PUT. For a plain create, a missing or malformed Content-Type means `application/octet-stream`,
+ * as upstream; for a fork it means the source's.
+ */
+export const parseCreateRequest = ({
     headers,
     body,
 }: {
     readonly headers: CreateStreamRequestHeaders;
     readonly body: Uint8Array;
-}): Effect.Effect<CreateStreamRequest, BadRequestError> => {
-    if (headers['stream-forked-from'] !== undefined) {
-        return Effect.fail(BadRequestError.make({ reason: 'Forks are not supported yet' }));
-    }
-    const sentContentType = headers['content-type'] ?? '';
-    const contentType = /^[\w-]+\/[\w-]+/.test(sentContentType)
-        ? sentContentType
-        : defaultContentType;
-    return Effect.succeed({
-        contentType,
+}): ParsedCreateRequest => {
+    const settings = {
         ttlSeconds: Option.fromUndefinedOr(headers['stream-ttl']),
         expiresAt: Option.fromUndefinedOr(headers['stream-expires-at']),
         closed: headers['stream-closed'] ?? false,
         body,
+    };
+    const source = headers['stream-forked-from'];
+    if (source === undefined) {
+        return ParsedCreateRequest.CreateStream({
+            request: {
+                ...settings,
+                contentType: Option.getOrElse(contentTypeOf(headers), () => defaultContentType),
+            },
+        });
+    }
+    return ParsedCreateRequest.CreateFork({
+        request: {
+            ...settings,
+            source,
+            offset: Option.fromUndefinedOr(headers['stream-fork-offset']),
+            subOffset: headers['stream-fork-sub-offset'] ?? 0,
+            contentType: contentTypeOf(headers),
+        },
     });
 };
 

@@ -14,10 +14,12 @@ import {
 import {
     ContentTypeMismatchError,
     InvalidEpochSeqError,
+    InvalidForkOffsetError,
     SequenceGapError,
     StaleEpochError,
     type StreamClosedError,
     StreamConfigConflictError,
+    StreamGoneError,
     StreamNotFoundError,
     StreamSeqConflictError,
 } from '@kylelayer/effect-durable-streams-protocol/errors';
@@ -27,7 +29,7 @@ import {
     type ProducerState,
 } from '@kylelayer/effect-durable-streams-protocol/producer';
 import type { ProducerRequestId, StoredStream } from './stored-stream';
-import type { AppendRequest } from './stream-operation-requests';
+import type { AppendRequest, CreateForkRequest, ForkPoint } from './stream-operation-requests';
 
 /** The settings a PUT must repeat for an existing stream to count as the same stream (PROTOCOL.md 5.1). */
 export type StreamConfig = Pick<
@@ -53,6 +55,7 @@ export const ProducerSequencePosition = Data.taggedEnum<ProducerSequencePosition
 
 export type AppendRejection =
     | StreamNotFoundError
+    | StreamGoneError
     | StreamClosedError
     | ContentTypeMismatchError
     | StaleEpochError
@@ -60,35 +63,82 @@ export type AppendRejection =
     | SequenceGapError
     | StreamSeqConflictError;
 
+/** When the stream expires: its Expires-At, or its last access plus its TTL, whichever is first. */
+export const expiryOf = (stream: StoredStream): Option.Option<DateTime.Utc> => {
+    const ttlExpiry = Option.map(stream.ttlSeconds, (seconds) =>
+        DateTime.add(stream.lastAccessedAt, { seconds }),
+    );
+    return Option.match(stream.expiresAt, {
+        onNone: () => ttlExpiry,
+        onSome: (expiresAt) =>
+            Option.some(
+                Option.match(ttlExpiry, {
+                    onNone: () => expiresAt,
+                    onSome: (ttl) => DateTime.min(expiresAt, ttl),
+                }),
+            ),
+    });
+};
+
 export const isExpired = ({
     stream,
     now,
 }: {
     readonly stream: StoredStream;
     readonly now: DateTime.Utc;
-}): boolean => {
-    const pastExpiresAt = Option.exists(stream.expiresAt, (expiresAt) =>
-        DateTime.isGreaterThanOrEqualTo(now, expiresAt),
-    );
-    const pastTtl = Option.exists(stream.ttlSeconds, (seconds) =>
-        DateTime.isGreaterThanOrEqualTo(now, DateTime.add(stream.lastAccessedAt, { seconds })),
-    );
-    return pastExpiresAt || pastTtl;
+}): boolean =>
+    Option.exists(expiryOf(stream), (expiry) => DateTime.isGreaterThanOrEqualTo(now, expiry));
+
+/** What a stored row means for a request to its stream. */
+export type StoredStreamStatus = Data.TaggedEnum<{
+    /** Nothing stored, or expired with no forks: the stream no longer exists. */
+    Missing: {};
+    /** A fork still being created (PROTOCOL.md 4.2 has no state for it; it answers 404). */
+    Copying: { readonly stream: StoredStream };
+    /** Soft-deleted, or expired while forks still copy from it: 410. */
+    Gone: { readonly stream: StoredStream };
+    Live: { readonly stream: StoredStream };
+}>;
+export const StoredStreamStatus = Data.taggedEnum<StoredStreamStatus>();
+
+export const statusOf = ({
+    stored,
+    now,
+}: {
+    readonly stored: Option.Option<StoredStream>;
+    readonly now: DateTime.Utc;
+}): StoredStreamStatus => {
+    if (Option.isNone(stored)) {
+        return StoredStreamStatus.Missing();
+    }
+    const stream = stored.value;
+    if (Option.isSome(stream.copy)) {
+        return StoredStreamStatus.Copying({ stream });
+    }
+    const expired = isExpired({ stream, now });
+    if (stream.softDeleted || (expired && stream.hasForks)) {
+        return StoredStreamStatus.Gone({ stream });
+    }
+    if (expired) {
+        return StoredStreamStatus.Missing();
+    }
+    return StoredStreamStatus.Live({ stream });
 };
 
-/** Fails with 404 when nothing is stored at the path or the stored stream has expired: an expired stream no longer exists. */
+/** The stream a request can use: 404 when it doesn't exist (or is a fork still copying), 410 when soft-deleted. */
 export const getExistingStream = ({
     stored,
     now,
 }: {
     readonly stored: Option.Option<StoredStream>;
     readonly now: DateTime.Utc;
-}): Effect.Effect<StoredStream, StreamNotFoundError> => {
-    if (Option.isNone(stored) || isExpired({ stream: stored.value, now })) {
-        return Effect.fail(StreamNotFoundError.make({}));
-    }
-    return Effect.succeed(stored.value);
-};
+}): Effect.Effect<StoredStream, StreamNotFoundError | StreamGoneError> =>
+    StoredStreamStatus.$match(statusOf({ stored, now }), {
+        Missing: () => Effect.fail(StreamNotFoundError.make({})),
+        Copying: () => Effect.fail(StreamNotFoundError.make({})),
+        Gone: () => Effect.fail(StreamGoneError.make({})),
+        Live: ({ stream }) => Effect.succeed(stream),
+    });
 
 export const hasSameConfig = ({
     stream,
@@ -110,7 +160,7 @@ export const hasSameConfig = ({
     return sameMediaType && sameTtl && sameExpiresAt && sameClosed;
 };
 
-/** PROTOCOL.md 5.1: a PUT on an existing stream with a different config gets 409. */
+/** PROTOCOL.md 5.1: a PUT on an existing stream with a different config gets 409. A fork's config includes its source, so a plain PUT on a fork conflicts. */
 export const rejectConfigConflict = ({
     existing,
     requested,
@@ -118,7 +168,7 @@ export const rejectConfigConflict = ({
     readonly existing: StoredStream;
     readonly requested: StreamConfig;
 }): Effect.Effect<void, StreamConfigConflictError> => {
-    if (!hasSameConfig({ stream: existing, config: requested })) {
+    if (Option.isSome(existing.fork) || !hasSameConfig({ stream: existing, config: requested })) {
         return Effect.fail(StreamConfigConflictError.make({}));
     }
     return Effect.void;
@@ -142,6 +192,10 @@ export const buildNewStream = ({
     createdAt: now,
     lastAccessedAt: now,
     lastStreamSeq: Option.none(),
+    fork: Option.none(),
+    copy: Option.none(),
+    softDeleted: false,
+    hasForks: false,
 });
 
 /** On a closed stream: the exact producer request that closed it, or a close without producer headers, is a harmless repeat. */
@@ -261,3 +315,103 @@ export const updateStreamForAppend = ({
         lastAccessedAt: now,
     };
 };
+
+/**
+ * PROTOCOL.md 4.2: a fork PUT repeats an existing fork when it names the same source, offset and
+ * sub-offset, and any content type, TTL or Expires-At it sends matches the fork's.
+ */
+export const isSameForkRequest = ({
+    stream,
+    request,
+}: {
+    readonly stream: StoredStream;
+    readonly request: CreateForkRequest;
+}): boolean => {
+    const sameFork = Option.exists(
+        stream.fork,
+        (fork) =>
+            fork.source === request.source &&
+            Option.makeEquivalence(Equivalence.Number)(fork.offset, request.offset) &&
+            fork.subOffset === request.subOffset,
+    );
+    // a header the request leaves out matches whatever the fork has
+    const sameContentType = !Option.exists(
+        request.contentType,
+        (contentType) => mediaTypeOf(contentType) !== mediaTypeOf(stream.contentType),
+    );
+    const sameTtl = !Option.exists(
+        request.ttlSeconds,
+        (ttl) => !Option.contains(stream.ttlSeconds, ttl),
+    );
+    const sameExpiresAt = !Option.exists(
+        request.expiresAt,
+        (expiresAt) =>
+            !Option.exists(stream.expiresAt, (stored) => DateTime.Equivalence(stored, expiresAt)),
+    );
+    return sameFork && sameContentType && sameTtl && sameExpiresAt;
+};
+
+/**
+ * The source's checks for a fork request, in PROTOCOL.md 4.2's error table, and the point the fork
+ * copies up to. JSON counts a sub-offset in messages: `offset + k`. Other types count bytes into the
+ * message at `offset`, which the fork stores cut short as its last message. `messageBytes` is that
+ * message's length, when there is one.
+ */
+export const resolveForkPoint = ({
+    source,
+    request,
+    messageBytes,
+}: {
+    readonly source: StoredStream;
+    readonly request: Pick<CreateForkRequest, 'offset' | 'subOffset' | 'contentType'>;
+    readonly messageBytes: Option.Option<number>;
+}): Effect.Effect<ForkPoint, ContentTypeMismatchError | InvalidForkOffsetError> =>
+    Effect.gen(function* () {
+        if (
+            Option.exists(
+                request.contentType,
+                (contentType) => mediaTypeOf(contentType) !== mediaTypeOf(source.contentType),
+            )
+        ) {
+            return yield* ContentTypeMismatchError.make({});
+        }
+        const offset = Option.getOrElse(request.offset, () => source.tail);
+        if (offset > source.tail) {
+            return yield* InvalidForkOffsetError.make({});
+        }
+        const point = {
+            contentType: Option.getOrElse(request.contentType, () => source.contentType),
+            ttlSeconds: source.ttlSeconds,
+            expiresAt: source.expiresAt,
+        };
+        const k = request.subOffset;
+        if (k === 0) {
+            return { ...point, to: offset, lastBytes: Option.none() };
+        }
+        if (mediaTypeOf(source.contentType) === 'application/json') {
+            if (offset + k > source.tail) {
+                return yield* InvalidForkOffsetError.make({});
+            }
+            return { ...point, to: advance(offset, k), lastBytes: Option.none() };
+        }
+        // bytes into the message at `offset`, so there must be one, at least k bytes long
+        if (!Option.exists(messageBytes, (bytes) => k <= bytes)) {
+            return yield* InvalidForkOffsetError.make({});
+        }
+        return { ...point, to: advance(offset, 1), lastBytes: Option.some(k) };
+    });
+
+/**
+ * PROTOCOL.md 4.2's table: a fork that sends its own TTL or Expires-At keeps it; one that sends
+ * neither takes the source's.
+ */
+export const forkExpiry = ({
+    point,
+    request,
+}: {
+    readonly point: ForkPoint;
+    readonly request: Pick<CreateForkRequest, 'ttlSeconds' | 'expiresAt'>;
+}): Pick<StoredStream, 'ttlSeconds' | 'expiresAt'> =>
+    Option.isSome(request.ttlSeconds) || Option.isSome(request.expiresAt)
+        ? { ttlSeconds: request.ttlSeconds, expiresAt: request.expiresAt }
+        : { ttlSeconds: point.ttlSeconds, expiresAt: point.expiresAt };

@@ -45,6 +45,10 @@ const openStream: StoredStream = {
     createdAt,
     lastAccessedAt: createdAt,
     lastStreamSeq: Option.none(),
+    fork: Option.none(),
+    copy: Option.none(),
+    softDeleted: false,
+    hasForks: false,
 };
 
 const producerRequestId = ({ epoch, seq }: { readonly epoch: number; readonly seq: number }) =>

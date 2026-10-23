@@ -6,6 +6,7 @@ import { Effect, Layer, Schema, Stream } from 'effect';
 import {
     AppendRequest,
     AppendResult,
+    CreateForkRequest,
     CreateStreamRequest,
     CreateStreamResult,
     EmptyRequest,
@@ -18,28 +19,8 @@ import {
     WaitResult,
 } from '@kylelayer/effect-durable-streams-server/stream-operation-requests';
 import { Streams } from '@kylelayer/effect-durable-streams-server/streams';
+import { sendEncoded } from './encoded-rpc';
 import { StreamObject, StreamObjectLive } from './stream-object';
-
-/**
- * Encodes `value`, sends it with `send`, and decodes the reply. Both sides are our own code, so a
- * value that fails its schema is a bug: a defect, not a typed failure.
- */
-const sendEncoded = <Request, RequestEncoded, Result, ResultEncoded, E>({
-    request,
-    result,
-    value,
-    send,
-}: {
-    readonly request: Schema.Codec<Request, RequestEncoded>;
-    readonly result: Schema.Codec<Result, ResultEncoded>;
-    readonly value: Request;
-    readonly send: (encoded: RequestEncoded) => Effect.Effect<ResultEncoded, E>;
-}): Effect.Effect<Result, E> =>
-    Schema.encodeEffect(request)(value).pipe(
-        Effect.orDie,
-        Effect.flatMap(send),
-        Effect.flatMap((encoded) => Effect.orDie(Schema.decodeEffect(result)(encoded))),
-    );
 
 /**
  * Brings `StreamObject` with it (alchemy's Layers guide): providing this layer to a Worker binds the
@@ -58,6 +39,13 @@ export const layerDurableObject = Layer.effect(
                     result: CreateStreamResult,
                     value: request,
                     send: (encoded) => objects.getByName(request.stream).createStream(encoded),
+                }),
+            createFork: (request) =>
+                sendEncoded({
+                    request: CreateForkRequest,
+                    result: CreateStreamResult,
+                    value: request,
+                    send: (encoded) => objects.getByName(request.stream).createFork(encoded),
                 }),
             appendToStream: (request) =>
                 sendEncoded({

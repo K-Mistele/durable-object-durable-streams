@@ -19,7 +19,7 @@ import {
 import { etagFor } from '@kylelayer/effect-durable-streams-protocol/etag';
 import {
     parseAppendRequest,
-    parseCreateStreamRequest,
+    parseCreateRequest,
     readRequestBody,
     streamPathOf,
 } from './http-requests';
@@ -55,10 +55,11 @@ export const StreamsHandlers = HttpApiBuilder.group(DurableStreamsApi, 'streams'
                         contentLength: headers['content-length'],
                         maxBytes: settings.maxAppendBytes,
                     });
-                    const createRequest = yield* parseCreateStreamRequest({ headers, body });
-                    const { isNewStream, metadata } = yield* streams.createStream({
-                        ...createRequest,
-                        stream,
+                    const parsed = parseCreateRequest({ headers, body });
+                    const { isNewStream, metadata } = yield* Match.valueTags(parsed, {
+                        CreateStream: ({ request: create }) =>
+                            streams.createStream({ ...create, stream }),
+                        CreateFork: ({ request: fork }) => streams.createFork({ ...fork, stream }),
                     });
                     const responseHeaders = {
                         'content-type': metadata.contentType,

@@ -11,6 +11,7 @@ import {
     Offset,
     OffsetParam,
     ProducerSeq,
+    StreamPath,
     StreamSeq,
     TtlSeconds,
 } from '@kylelayer/effect-durable-streams-protocol/codec';
@@ -125,3 +126,77 @@ export const WaitResult = Schema.TaggedUnion({
     TimedOut: {},
 });
 export type WaitResult = typeof WaitResult.Type;
+
+/**
+ * PUT with `Stream-Forked-From` (PROTOCOL.md 4.2). `contentType`, `ttlSeconds` and `expiresAt`
+ * are None when the header was absent: the fork then takes the source's.
+ */
+export const CreateForkRequest = Schema.Struct({
+    source: StreamPath,
+    /** None: fork at the source's tail. */
+    offset: Schema.OptionFromNullOr(Offset),
+    /** 0 when the header was absent. */
+    subOffset: Schema.Int,
+    contentType: Schema.OptionFromNullOr(Schema.String),
+    ttlSeconds: Schema.OptionFromNullOr(TtlSeconds),
+    expiresAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+    closed: Schema.Boolean,
+    /** Messages to append after the copied ones; may be empty. */
+    body: Schema.Uint8Array,
+});
+export type CreateForkRequest = typeof CreateForkRequest.Type;
+
+/** To the source: check the fork request, and record `fork` as made from it. */
+export const AddForkRequest = Schema.Struct({
+    fork: StreamPath,
+    offset: Schema.OptionFromNullOr(Offset),
+    subOffset: Schema.Int,
+    contentType: Schema.OptionFromNullOr(Schema.String),
+});
+export type AddForkRequest = typeof AddForkRequest.Type;
+
+/** The source's answer to `addFork`: what the fork copies, and the settings it may take. */
+export const ForkPoint = Schema.Struct({
+    contentType: Schema.String,
+    ttlSeconds: Schema.OptionFromNullOr(TtlSeconds),
+    expiresAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+    /** Copy the messages before this offset. */
+    to: Offset,
+    /** Binary sub-offset: message `to - 1` stops after this many bytes. */
+    lastBytes: Schema.OptionFromNullOr(Schema.Int),
+});
+export type ForkPoint = typeof ForkPoint.Type;
+
+/** A chunk row's key, in wire form. */
+export const ChunkKeyRequest = Schema.Struct({ offset: Offset, part: Schema.Int });
+
+/** To the source: its rows after `after` and before `to`, cut at `lastBytes`, for `fork`'s copy. */
+export const ReadForkRowsRequest = Schema.Struct({
+    fork: StreamPath,
+    after: Schema.OptionFromNullOr(ChunkKeyRequest),
+    to: Offset,
+    lastBytes: Schema.OptionFromNullOr(Schema.Int),
+});
+export type ReadForkRowsRequest = typeof ReadForkRowsRequest.Type;
+
+/**
+ * One chunk row on its way to a fork. Rows cross as JSON lines, so bytes go as base64: a
+ * `Uint8Array` inside a JSON value would arrive as an object of numbered keys.
+ */
+export const ForkRow = Schema.Struct({
+    offset: Offset,
+    part: Schema.Int,
+    bytes: Schema.Uint8ArrayFromBase64,
+});
+export type ForkRow = typeof ForkRow.Type;
+
+/** To the source: `fork` was deleted. */
+export const RemoveForkRequest = Schema.Struct({ fork: StreamPath });
+export type RemoveForkRequest = typeof RemoveForkRequest.Type;
+
+/**
+ * After a stream's rows are purged: the source it was forked from, which must now remove it from
+ * its forks. None for a stream that is not a fork, or that was not purged.
+ */
+export const SourceToRelease = Schema.OptionFromNullOr(StreamPath);
+export type SourceToRelease = typeof SourceToRelease.Type;
