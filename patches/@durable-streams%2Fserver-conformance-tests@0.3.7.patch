@@ -1,0 +1,134 @@
+diff --git a/dist/src-BayKIZXG.cjs b/dist/src-BayKIZXG.cjs
+index d85665d6ec39569f97932d01f667c46d29b8b7d3..1cc13cbaaad4ed2ca88dfb8ae7e6989526e9720d 100644
+--- a/dist/src-BayKIZXG.cjs
++++ b/dist/src-BayKIZXG.cjs
+@@ -1099,7 +1099,7 @@ function runConformanceTests(options) {
+ 			const tailOffset = readResponse.headers.get(__durable_streams_client.STREAM_OFFSET_HEADER);
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=now&live=sse`, { untilContent: `"upToDate"` });
+ 			(0, vitest.expect)(response.status).toBe(200);
+-			const controlMatch = received.match(/event: control\s*\n\s*data:({[^}]+})/);
++			const controlMatch = received.match(/event: control\s*\n\s*data: ?({[^}]+})/);
+ 			(0, vitest.expect)(controlMatch).toBeDefined();
+ 			if (controlMatch && controlMatch[1]) {
+ 				const controlData = JSON.parse(controlMatch[1]);
+@@ -1151,7 +1151,7 @@ function runConformanceTests(options) {
+ 			});
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=now&live=sse`, { untilContent: `"upToDate"` });
+ 			(0, vitest.expect)(response.status).toBe(200);
+-			const controlMatch = received.match(/event: control\s*\n\s*data:({[^}]+})/);
++			const controlMatch = received.match(/event: control\s*\n\s*data: ?({[^}]+})/);
+ 			(0, vitest.expect)(controlMatch).toBeDefined();
+ 			if (controlMatch && controlMatch[1]) {
+ 				const controlData = JSON.parse(controlMatch[1]);
+@@ -2296,7 +2296,7 @@ function runConformanceTests(options) {
+ 			});
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=-1&live=sse`, { untilContent: `streamCursor` });
+ 			(0, vitest.expect)(response.status).toBe(200);
+-			const controlMatch = received.match(/event: control\s*\ndata:({[^}]+})/);
++			const controlMatch = received.match(/event: control\s*\ndata: ?({[^}]+})/);
+ 			(0, vitest.expect)(controlMatch).toBeDefined();
+ 			const controlData = JSON.parse(controlMatch[1]);
+ 			(0, vitest.expect)(controlData.streamCursor).toBeDefined();
+@@ -2310,11 +2310,11 @@ function runConformanceTests(options) {
+ 				body: `test data`
+ 			});
+ 			const { received: received1 } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=-1&live=sse`, { untilContent: `streamCursor` });
+-			const controlMatch1 = received1.match(/event: control\s*\ndata:({[^}]+})/);
++			const controlMatch1 = received1.match(/event: control\s*\ndata: ?({[^}]+})/);
+ 			(0, vitest.expect)(controlMatch1).toBeDefined();
+ 			const cursor1 = JSON.parse(controlMatch1[1]).streamCursor;
+ 			const { received: received2 } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=-1&live=sse&cursor=${cursor1}`, { untilContent: `streamCursor` });
+-			const controlMatch2 = received2.match(/event: control\s*\ndata:({[^}]+})/);
++			const controlMatch2 = received2.match(/event: control\s*\ndata: ?({[^}]+})/);
+ 			(0, vitest.expect)(controlMatch2).toBeDefined();
+ 			const cursor2 = JSON.parse(controlMatch2[1]).streamCursor;
+ 			(0, vitest.expect)(parseInt(cursor2, 10)).toBeGreaterThan(parseInt(cursor1, 10));
+@@ -2399,9 +2399,9 @@ function runConformanceTests(options) {
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=-1&live=sse`, { untilContent: `event: control` });
+ 			(0, vitest.expect)(response.status).toBe(200);
+ 			(0, vitest.expect)(received).toContain(`event: data`);
+-			(0, vitest.expect)(received).toContain(`data:line1`);
+-			(0, vitest.expect)(received).toContain(`data:line2`);
+-			(0, vitest.expect)(received).toContain(`data:line3`);
++			(0, vitest.expect)(received).toMatch(/data: ?line1/);
++			(0, vitest.expect)(received).toMatch(/data: ?line2/);
++			(0, vitest.expect)(received).toMatch(/data: ?line3/);
+ 		});
+ 		(0, vitest.test)(`should prevent CRLF injection in payloads - embedded event boundaries become literal data`, async () => {
+ 			const streamPath = `/v1/stream/sse-crlf-injection-test-${Date.now()}`;
+@@ -2764,7 +2764,7 @@ function runConformanceTests(options) {
+ 			});
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=now&live=sse`, { untilContent: `"upToDate"` });
+ 			(0, vitest.expect)(response.status).toBe(200);
+-			const controlMatch = received.match(/event: control\s*\n\s*data:({[^}]+})/);
++			const controlMatch = received.match(/event: control\s*\n\s*data: ?({[^}]+})/);
+ 			(0, vitest.expect)(controlMatch).toBeDefined();
+ 			if (controlMatch && controlMatch[1]) {
+ 				const controlData = JSON.parse(controlMatch[1]);
+diff --git a/dist/src-wMgS3XWd.js b/dist/src-wMgS3XWd.js
+index b2c06bdb2362bd3c2853665c20c2a32810407af7..e657e3d9f371f9b2f226930363d75fa61360c158 100644
+--- a/dist/src-wMgS3XWd.js
++++ b/dist/src-wMgS3XWd.js
+@@ -1097,7 +1097,7 @@ function runConformanceTests(options) {
+ 			const tailOffset = readResponse.headers.get(STREAM_OFFSET_HEADER);
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=now&live=sse`, { untilContent: `"upToDate"` });
+ 			expect(response.status).toBe(200);
+-			const controlMatch = received.match(/event: control\s*\n\s*data:({[^}]+})/);
++			const controlMatch = received.match(/event: control\s*\n\s*data: ?({[^}]+})/);
+ 			expect(controlMatch).toBeDefined();
+ 			if (controlMatch && controlMatch[1]) {
+ 				const controlData = JSON.parse(controlMatch[1]);
+@@ -1149,7 +1149,7 @@ function runConformanceTests(options) {
+ 			});
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=now&live=sse`, { untilContent: `"upToDate"` });
+ 			expect(response.status).toBe(200);
+-			const controlMatch = received.match(/event: control\s*\n\s*data:({[^}]+})/);
++			const controlMatch = received.match(/event: control\s*\n\s*data: ?({[^}]+})/);
+ 			expect(controlMatch).toBeDefined();
+ 			if (controlMatch && controlMatch[1]) {
+ 				const controlData = JSON.parse(controlMatch[1]);
+@@ -2294,7 +2294,7 @@ function runConformanceTests(options) {
+ 			});
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=-1&live=sse`, { untilContent: `streamCursor` });
+ 			expect(response.status).toBe(200);
+-			const controlMatch = received.match(/event: control\s*\ndata:({[^}]+})/);
++			const controlMatch = received.match(/event: control\s*\ndata: ?({[^}]+})/);
+ 			expect(controlMatch).toBeDefined();
+ 			const controlData = JSON.parse(controlMatch[1]);
+ 			expect(controlData.streamCursor).toBeDefined();
+@@ -2308,11 +2308,11 @@ function runConformanceTests(options) {
+ 				body: `test data`
+ 			});
+ 			const { received: received1 } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=-1&live=sse`, { untilContent: `streamCursor` });
+-			const controlMatch1 = received1.match(/event: control\s*\ndata:({[^}]+})/);
++			const controlMatch1 = received1.match(/event: control\s*\ndata: ?({[^}]+})/);
+ 			expect(controlMatch1).toBeDefined();
+ 			const cursor1 = JSON.parse(controlMatch1[1]).streamCursor;
+ 			const { received: received2 } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=-1&live=sse&cursor=${cursor1}`, { untilContent: `streamCursor` });
+-			const controlMatch2 = received2.match(/event: control\s*\ndata:({[^}]+})/);
++			const controlMatch2 = received2.match(/event: control\s*\ndata: ?({[^}]+})/);
+ 			expect(controlMatch2).toBeDefined();
+ 			const cursor2 = JSON.parse(controlMatch2[1]).streamCursor;
+ 			expect(parseInt(cursor2, 10)).toBeGreaterThan(parseInt(cursor1, 10));
+@@ -2397,9 +2397,9 @@ function runConformanceTests(options) {
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=-1&live=sse`, { untilContent: `event: control` });
+ 			expect(response.status).toBe(200);
+ 			expect(received).toContain(`event: data`);
+-			expect(received).toContain(`data:line1`);
+-			expect(received).toContain(`data:line2`);
+-			expect(received).toContain(`data:line3`);
++			expect(received).toMatch(/data: ?line1/);
++			expect(received).toMatch(/data: ?line2/);
++			expect(received).toMatch(/data: ?line3/);
+ 		});
+ 		test(`should prevent CRLF injection in payloads - embedded event boundaries become literal data`, async () => {
+ 			const streamPath = `/v1/stream/sse-crlf-injection-test-${Date.now()}`;
+@@ -2762,7 +2762,7 @@ function runConformanceTests(options) {
+ 			});
+ 			const { response, received } = await fetchSSE(`${getBaseUrl()}${streamPath}?offset=now&live=sse`, { untilContent: `"upToDate"` });
+ 			expect(response.status).toBe(200);
+-			const controlMatch = received.match(/event: control\s*\n\s*data:({[^}]+})/);
++			const controlMatch = received.match(/event: control\s*\n\s*data: ?({[^}]+})/);
+ 			expect(controlMatch).toBeDefined();
+ 			if (controlMatch && controlMatch[1]) {
+ 				const controlData = JSON.parse(controlMatch[1]);

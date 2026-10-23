@@ -1,0 +1,21 @@
+{
+    "name": "@kylelayer/effect-durable-streams-server",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Protocol engine, SQL storage, HttpApi handlers and the Streams service.",
+    "type": "module",
+    "exports": {
+        "./*": "./src/*.ts"
+    },
+    "scripts": {
+        "test": "vp test"
+    },
+    "dependencies": {
+        "@kylelayer/effect-durable-streams-protocol": "workspace:*",
+        "effect": "catalog:"
+    },
+    "devDependencies": {
+        "@effect/vitest": "catalog:",
+        "vite-plus": "catalog:"
+    }
+}

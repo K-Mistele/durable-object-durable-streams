@@ -64,6 +64,7 @@ const profileRules: Readonly<Record<RuleProfile, ReadonlyArray<string>>> = {
     "pipe-max-arguments",
     "prefer-effect-match",
     "prefer-option-from-nullable",
+    "prefer-tagged-error-handling",
     "require-context-service-in-services",
   ],
   "next-tailwind": [

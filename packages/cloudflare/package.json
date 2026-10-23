@@ -1,0 +1,25 @@
+{
+    "name": "@kylelayer/effect-durable-streams-cloudflare",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Cloudflare Workers + Durable Objects host.",
+    "type": "module",
+    "scripts": {
+        "test": "vp test --exclude tests/conformance.test.ts",
+        "test:conformance": "vp test tests/conformance.test.ts"
+    },
+    "dependencies": {
+        "@effect/sql-sqlite-do": "catalog:",
+        "@kylelayer/effect-durable-streams-protocol": "workspace:*",
+        "@kylelayer/effect-durable-streams-server": "workspace:*",
+        "alchemy": "catalog:",
+        "effect": "catalog:"
+    },
+    "devDependencies": {
+        "@durable-streams/cli": "0.2.7",
+        "@durable-streams/server-conformance-tests": "0.3.7",
+        "@effect/platform-node": "catalog:",
+        "@effect/vitest": "catalog:",
+        "vite-plus": "catalog:"
+    }
+}

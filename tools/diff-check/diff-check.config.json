@@ -2,7 +2,14 @@
   "baseRef": "HEAD",
   "oxlintConfigPath": "./diff-check.oxlintrc.json",
   "sourceExtensions": [".ts", ".tsx"],
-  "excludePathPrefixes": ["dist/", "coverage/", "vendor/"],
+  "excludePathPrefixes": [
+    "dist/",
+    "coverage/",
+    "vendor/",
+    "tools/diff-check/",
+    "tools/oxlint/",
+    "tools/typed-lint/"
+  ],
   "changedFileRules": [
     {
       "rule": "diff/key-file-change",
