@@ -141,3 +141,42 @@ test(
     }),
     { timeout: 120_000 },
 );
+
+test(
+    'a GET with an unknown live value is a catch-up read',
+    Effect.gen(function* () {
+        const streamUrl = yield* streamUrlFor('unknown-live');
+        yield* HttpClient.put(streamUrl, { body: HttpBody.text('hello', 'text/plain') });
+
+        const withOffset = yield* HttpClient.get(`${streamUrl}?offset=-1&live=unknown`);
+        const withoutOffset = yield* HttpClient.get(`${streamUrl}?live=unknown`);
+        // long-poll and SSE still need an offset
+        const longPollWithoutOffset = yield* HttpClient.get(`${streamUrl}?live=long-poll`);
+
+        expect(withOffset.status).toBe(200);
+        expect(yield* withOffset.text).toBe('hello');
+        expect(withoutOffset.status).toBe(200);
+        expect(yield* withoutOffset.text).toBe('hello');
+        expect(longPollWithoutOffset.status).toBe(400);
+    }),
+    { timeout: 60_000 },
+);
+
+test(
+    'a long-poll at offset -1 on an empty stream answers at once',
+    Effect.gen(function* () {
+        const streamUrl = yield* streamUrlFor('long-poll-empty');
+        yield* HttpClient.put(streamUrl, { body: HttpBody.text('', 'text/plain') });
+
+        // the test Stack's long-poll timeout is 2s, so waiting would take that long
+        const [elapsed, response] = yield* Effect.timed(
+            HttpClient.get(`${streamUrl}?offset=-1&live=long-poll`),
+        );
+
+        expect(response.status).toBe(200);
+        expect(yield* response.text).toBe('');
+        expect(response.headers['stream-up-to-date']).toBe('true');
+        expect(Duration.toMillis(elapsed)).toBeLessThan(1_000);
+    }),
+    { timeout: 60_000 },
+);

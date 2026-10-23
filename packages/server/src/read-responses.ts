@@ -184,7 +184,9 @@ export const layerReadResponses = Layer.effect(
                     });
 
                 const range = yield* streams.startRead({ stream, from: requestedOffset });
-                if (range.start < range.end) {
+                // offset=-1 is a first read, not a caught-up client: answer now even when the
+                // stream is empty, as upstream does
+                if (range.start < range.end || requestedOffset === '-1') {
                     return yield* respondWithNewMessages(range);
                 }
                 if (range.metadata.closed) {

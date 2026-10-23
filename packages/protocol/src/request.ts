@@ -1,4 +1,4 @@
-import { Array, Effect, Predicate, Schema, pipe } from 'effect';
+import { Array, Effect, Predicate, Schema, SchemaGetter, pipe } from 'effect';
 import {
     NonNegativeIntFromString,
     Offset,
@@ -79,9 +79,25 @@ export const ReadStreamQuery = Schema.Union([
         live: Schema.Literal('sse'),
         cursor: Schema.optionalKey(Schema.String),
     }),
+    // any other `live` value is a catch-up read, as upstream; long-poll and SSE without an
+    // offset must not fall through to here
     Schema.Struct({
         offset: OffsetParam.pipe(Schema.withDecodingDefaultKey(Effect.succeed('-1'))),
-        live: Schema.optionalKey(Schema.Never),
+        live: Schema.optionalKey(
+            Schema.String.check(
+                Schema.makeFilter(
+                    (live) =>
+                        (live !== 'long-poll' && live !== 'sse') ||
+                        `live=${live} requires an offset`,
+                ),
+            ).pipe(
+                // decoded to one literal, so handlers can tell it from long-poll and SSE
+                Schema.decodeTo(Schema.Literal('catch-up'), {
+                    decode: SchemaGetter.transform(() => 'catch-up' as const),
+                    encode: SchemaGetter.transform((live) => live),
+                }),
+            ),
+        ),
     }),
 ]);
 export type ReadStreamQuery = typeof ReadStreamQuery.Type;
