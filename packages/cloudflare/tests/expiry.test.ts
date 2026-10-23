@@ -1,6 +1,6 @@
-import { expect } from '@effect/vitest';
+import { expect } from 'alchemy-test';
 import * as Cloudflare from 'alchemy/Cloudflare';
-import * as Test from 'alchemy/Test/Vitest';
+import * as Test from 'alchemy/Test/Alchemy';
 import { Array as Arr, Clock, Effect, Fiber, Option, Random, Stream } from 'effect';
 import * as HttpBody from 'effect/http/HttpBody';
 import * as HttpClient from 'effect/http/HttpClient';

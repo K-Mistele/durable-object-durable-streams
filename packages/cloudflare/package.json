@@ -5,8 +5,8 @@
     "description": "Cloudflare Workers + Durable Objects host.",
     "type": "module",
     "scripts": {
-        "test": "vp test --exclude tests/conformance.test.ts",
-        "test:conformance": "vp test tests/conformance.test.ts"
+        "test": "DURABLE_STREAMS_LONG_POLL_TIMEOUT='2 seconds' alchemy-test tests/round-trip.test.ts tests/reads.test.ts tests/forks.test.ts tests/expiry.test.ts",
+        "test:conformance": "vp test --testTimeout 15000 tests/conformance.test.ts"
     },
     "dependencies": {
         "@effect/sql-sqlite-do": "catalog:",
@@ -20,6 +20,7 @@
         "@durable-streams/server-conformance-tests": "0.3.7",
         "@effect/platform-node": "catalog:",
         "@effect/vitest": "catalog:",
+        "alchemy-test": "workspace:*",
         "vite-plus": "catalog:"
     }
 }

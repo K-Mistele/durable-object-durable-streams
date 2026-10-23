@@ -1,6 +1,6 @@
-import { expect } from '@effect/vitest';
+import { expect } from 'alchemy-test';
 import * as Cloudflare from 'alchemy/Cloudflare';
-import * as Test from 'alchemy/Test/Vitest';
+import * as Test from 'alchemy/Test/Alchemy';
 import { Arbitrary, Array as Arr, Clock, Duration, Effect, Option, Random, Schema } from 'effect';
 import { Base64 } from 'effect/encoding';
 import * as HttpBody from 'effect/http/HttpBody';
