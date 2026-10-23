@@ -35,22 +35,23 @@ test(
     Effect.gen(function* () {
         const streamUrl = yield* streamUrlFor('sliding-ttl');
         const created = yield* HttpClient.put(streamUrl, {
-            headers: { 'stream-ttl': '2' },
+            headers: { 'stream-ttl': '3' },
             body: HttpBody.uint8Array(new Uint8Array([1]), binary),
         });
-        // a read each second for 4 seconds keeps sliding the 2-second TTL past the alarm
-        const reads = yield* Effect.forEach(Arr.range(1, 4), () =>
+        // a read each second for 5 seconds keeps sliding the 3-second TTL past the alarm; 3s, not
+        // 2s, leaves room for a slow CI runner between reads
+        const reads = yield* Effect.forEach(Arr.range(1, 5), () =>
             Effect.sleep('1 second').pipe(
                 Effect.andThen(HttpClient.get(`${streamUrl}?offset=-1`)),
                 Effect.map((response) => response.status),
             ),
         );
         // then left alone, it expires
-        yield* Effect.sleep('3 seconds');
+        yield* Effect.sleep('4 seconds');
         const afterIdle = yield* HttpClient.head(streamUrl);
 
         expect(created.status).toBe(201);
-        expect(reads).toEqual([200, 200, 200, 200]);
+        expect(reads).toEqual([200, 200, 200, 200, 200]);
         expect(afterIdle.status).toBe(404);
     }).pipe(Effect.scoped),
     { timeout: 30_000 },
