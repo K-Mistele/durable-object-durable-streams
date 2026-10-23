@@ -19,7 +19,12 @@ import * as HttpBody from 'effect/http/HttpBody';
 import * as HttpClient from 'effect/http/HttpClient';
 import Stack from '../alchemy.run';
 
-const { test, beforeAll, deploy } = Test.make({ providers: Cloudflare.providers(), dev: true });
+// its own stage, so the test files can deploy and run at once without sharing local state
+const { test, beforeAll, deploy } = Test.make({
+    providers: Cloudflare.providers(),
+    dev: true,
+    stage: `${Test.defaultStage()}-reads`,
+});
 
 const stack = beforeAll(deploy(Stack));
 
@@ -56,9 +61,9 @@ const joinBytes = (chunks: ReadonlyArray<Uint8Array>) => {
     return joined;
 };
 
-// 600 messages of 100KB, each filled with its index: 15 pages of 4MB
-const messageBytes = 100 * 1024;
-const messageCount = 600;
+// 60 messages of 1MB, each filled with its index: 15 pages of 4MB, in few POSTs
+const messageBytes = 1024 * 1024;
+const messageCount = 60;
 const messageAt = (index: number) => new Uint8Array(messageBytes).fill(index % 256);
 
 test(

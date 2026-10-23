@@ -10,9 +10,11 @@ import * as Test from 'alchemy/Test/Vitest';
 import { Effect } from 'effect';
 import Stack from '../alchemy.run';
 
+// its own stage, so it can run at the same time as the other test files
 const { beforeAll, beforeEach, deploy } = Test.make({
     providers: Cloudflare.providers(),
     dev: true,
+    stage: `${Test.defaultStage()}-conformance`,
 });
 
 const stack = beforeAll(deploy(Stack));
