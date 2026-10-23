@@ -8,7 +8,7 @@ import * as HttpBody from 'effect/http/HttpBody';
 import * as HttpClient from 'effect/http/HttpClient';
 import Stack from '../alchemy.run';
 
-// its own stage, so the test files can deploy and run at once without sharing local state
+// its own stage, so its local state is its own
 const { test, beforeAll, deploy } = Test.make({
     providers: Cloudflare.providers(),
     dev: true,
