@@ -2,12 +2,13 @@
  * The edge: request headers and body parsed into the `stream-operation-requests.ts` types. A
  * request that fits none of them fails here, with 400 or 413, and nothing past here re-checks it.
  */
-import { Data, Effect, Option } from 'effect';
+import { Array as Arr, Data, Effect, Option } from 'effect';
 import type { HttpServerRequest } from 'effect/http/HttpServerRequest';
 import { StreamPath } from '@kylelayer/effect-durable-streams-protocol/codec';
 import {
     BadRequestError,
     PayloadTooLargeError,
+    StreamNotFoundError,
 } from '@kylelayer/effect-durable-streams-protocol/errors';
 import type {
     AppendStreamRequestHeaders,
@@ -22,9 +23,19 @@ import {
 
 const defaultContentType = 'application/octet-stream';
 
-/** The route's `*` match is the path without its leading "/". */
-export const streamPathOf = (params: { readonly '*': string }): StreamPath =>
-    StreamPath.make(`/${params['*']}`);
+/**
+ * The route's `*` match is the path without its leading "/". PROTOCOL.md 6 reserves paths with
+ * a `__ds` segment for control APIs and has servers route them before stream operations. We have
+ * none (no subscriptions), so such a path is never a stream: 404, as upstream's Cloudflare server.
+ */
+export const parseStreamPath = (params: {
+    readonly '*': string;
+}): Effect.Effect<StreamPath, StreamNotFoundError> => {
+    const stream = StreamPath.make(`/${params['*']}`);
+    return Arr.contains(stream.split('/'), '__ds')
+        ? Effect.fail(StreamNotFoundError.make({}))
+        : Effect.succeed(stream);
+};
 
 /**
  * The whole body, refused with 413 past `maxBytes`. A Content-Length over the cap is refused
