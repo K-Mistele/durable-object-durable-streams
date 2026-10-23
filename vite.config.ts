@@ -19,6 +19,7 @@ const ignorePatterns = [
     '.pi/**',
     '.roo/**',
     '.windsurf/**',
+    'tools/alchemy-test/**',
     'tools/diff-check/**',
     'tools/oxlint/anti-slop/**',
     'tools/oxlint/automation/**',

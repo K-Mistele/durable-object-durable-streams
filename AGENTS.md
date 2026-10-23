@@ -2,6 +2,7 @@
 
 - Effect 4.0.5.
 - `tools/oxlint/anti-slop/` is a vendored copy of kyle-anti-slop. Do not edit it; see `tools/oxlint/PROVENANCE.md`.
+- `tools/alchemy-test/` is a vendored copy of alchemy's test runner. Do not edit it; see `tools/alchemy-test/UPSTREAM.md`. `packages/cloudflare` tests run under it (one process, files at once), except the conformance suite, which needs Vitest.
 - Project rules live in `tools/oxlint/automation/` and `tools/typed-lint/`.
 - run after you finish making changes: `bun run check`
 

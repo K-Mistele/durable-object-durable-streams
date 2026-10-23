@@ -24,6 +24,7 @@
         "@effect/vitest": "catalog:",
         "@oxlint/plugins": "1.88.0",
         "@types/node": "^26.1.1",
+        "alchemy-test": "workspace:*",
         "fast-glob": "^3.3.3",
         "oxlint": "1.88.0",
         "oxlint-tsgolint": "7.0.2004",

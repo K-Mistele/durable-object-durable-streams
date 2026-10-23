@@ -1,6 +1,6 @@
-import { expect } from '@effect/vitest';
+import { expect } from 'alchemy-test';
 import * as Cloudflare from 'alchemy/Cloudflare';
-import * as Test from 'alchemy/Test/Vitest';
+import * as Test from 'alchemy/Test/Alchemy';
 import { Buffer } from 'node:buffer';
 import {
     Array as Arr,

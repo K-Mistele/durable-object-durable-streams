@@ -1,15 +1,15 @@
 /**
  * Upstream's conformance suite against the Stack in workerd (`dev: true`). The suite reads
  * `config.baseUrl` inside each test, so `beforeEach` sets it from the deployed Stack. The SSE tests
- * are patched to accept `data: ` (patches/, upstream PR #285).
+ * are patched to accept `data: ` (patches/, upstream PR #285). The suite's tests take vitest's
+ * default timeout, 5s; `test:conformance` raises it to 15s, since the first request after deploy
+ * starts the Worker and the first Durable Object, which took over 5s on a busy CI runner.
  */
 import { runConformanceTests } from '@durable-streams/server-conformance-tests';
 import { describe } from '@effect/vitest';
 import * as Cloudflare from 'alchemy/Cloudflare';
 import * as Test from 'alchemy/Test/Vitest';
-import { Clock, Effect } from 'effect';
-import * as HttpBody from 'effect/http/HttpBody';
-import * as HttpClient from 'effect/http/HttpClient';
+import { Effect } from 'effect';
 import Stack from '../alchemy.run';
 
 // its own stage, so its local state is its own
@@ -19,22 +19,7 @@ const { beforeAll, beforeEach, deploy } = Test.make({
     stage: `${Test.defaultStage()}-conformance`,
 });
 
-// The first request after deploy starts the Worker and the first Durable Object, which on a busy
-// CI runner can take longer than the suite's 5s test timeout. A warm-up stream pays for it here.
-const stack = beforeAll(
-    deploy(Stack).pipe(
-        Effect.tap(({ url }) =>
-            Effect.gen(function* () {
-                if (url === undefined) {
-                    return;
-                }
-                const warmUp = `${url.replace(/\/+$/, '')}/warm-up-${yield* Clock.currentTimeMillis}`;
-                yield* HttpClient.put(warmUp, { body: HttpBody.text('', 'text/plain') });
-                yield* HttpClient.del(warmUp);
-            }),
-        ),
-    ),
-);
+const stack = beforeAll(deploy(Stack));
 
 // vite.config.ts gives the Worker the same 2s long-poll timeout
 const config = { baseUrl: '', longPollTimeoutMs: 2_000 };

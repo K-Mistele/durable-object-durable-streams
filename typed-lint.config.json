@@ -1,5 +1,13 @@
 {
     "projects": ["apps/*/tsconfig.json", "packages/*/tsconfig.json"],
+    "sourceExcludes": [
+        "**/*.d.ts",
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/build/**",
+        "**/coverage/**",
+        "tools/alchemy-test/**"
+    ],
     "rules": {
         "no-svg-files": "error",
         "prefer-effect-array-match": "error",
