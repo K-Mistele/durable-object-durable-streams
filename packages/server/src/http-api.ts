@@ -20,8 +20,8 @@ import { etagFor } from '@kylelayer/effect-durable-streams-protocol/etag';
 import {
     parseAppendRequest,
     parseCreateRequest,
+    parseStreamPath,
     readRequestBody,
-    streamPathOf,
 } from './http-requests';
 import { layerReadResponses, ReadResponses } from './read-responses';
 import { Streams } from './streams';
@@ -49,12 +49,13 @@ export const StreamsHandlers = HttpApiBuilder.group(DurableStreamsApi, 'streams'
         return handlers
             .handle('createStream', ({ params, headers, request }) =>
                 Effect.gen(function* () {
-                    const stream = streamPathOf(params);
                     const body = yield* readRequestBody({
                         request,
                         contentLength: headers['content-length'],
                         maxBytes: settings.maxAppendBytes,
                     });
+                    // after the body: answering before it is read breaks the client's connection
+                    const stream = yield* parseStreamPath(params);
                     const parsed = parseCreateRequest({ headers, body });
                     const { isNewStream, metadata } = yield* Match.valueTags(parsed, {
                         CreateStream: ({ request: create }) =>
@@ -84,12 +85,13 @@ export const StreamsHandlers = HttpApiBuilder.group(DurableStreamsApi, 'streams'
             )
             .handle('appendStream', ({ params, headers, request }) =>
                 Effect.gen(function* () {
-                    const stream = streamPathOf(params);
                     const body = yield* readRequestBody({
                         request,
                         contentLength: headers['content-length'],
                         maxBytes: settings.maxAppendBytes,
                     });
+                    // after the body: answering before it is read breaks the client's connection
+                    const stream = yield* parseStreamPath(params);
                     const appendRequest = yield* parseAppendRequest({ headers, body });
                     const result = yield* streams.appendToStream({ ...appendRequest, stream });
                     // a duplicate of an append (not of the close) wrote nothing, so it names no offset
@@ -121,63 +123,73 @@ export const StreamsHandlers = HttpApiBuilder.group(DurableStreamsApi, 'streams'
                 }),
             )
             .handle('readStream', ({ params, query, headers }) => {
-                const stream = streamPathOf(params);
                 const ifNoneMatch = headers['if-none-match'];
-                return Match.value(query).pipe(
-                    Match.when({ live: 'long-poll' }, (longPoll) =>
-                        respondToLongPollRead({
-                            stream,
-                            requestedOffset: longPoll.offset,
-                            ifNoneMatch,
-                            clientCursor: longPoll.cursor,
-                            timeout: settings.longPollTimeout,
-                        }),
-                    ),
-                    Match.when({ live: 'sse' }, (sse) =>
-                        respondToSseRead({
-                            stream,
-                            requestedOffset: sse.offset,
-                            clientCursor: sse.cursor,
-                            waitTimeout: settings.longPollTimeout,
-                            lifetime: settings.sseLifetime,
-                        }),
-                    ),
-                    Match.orElse((catchUp) =>
-                        respondToCatchUpRead({
-                            stream,
-                            requestedOffset: catchUp.offset,
-                            ifNoneMatch,
-                        }),
-                    ),
-                );
-            })
-            .handle('headStream', ({ params }) => {
-                const stream = streamPathOf(params);
-                return streams.getMetadata({ stream }).pipe(
-                    Effect.map((metadata) =>
-                        HttpApiSchema.withHeaders({
-                            body: undefined,
-                            headers: {
-                                'content-type': metadata.contentType,
-                                'stream-next-offset': metadata.tail,
-                                'stream-closed': metadata.closed || undefined,
-                                'stream-ttl': Option.getOrUndefined(metadata.ttlSeconds),
-                                'stream-expires-at': Option.getOrUndefined(metadata.expiresAt),
-                                etag: etagFor({
-                                    id: stream,
-                                    start: '-1',
-                                    end: metadata.tail,
-                                    closed: metadata.closed,
+                return parseStreamPath(params).pipe(
+                    Effect.flatMap((stream) =>
+                        Match.value(query).pipe(
+                            Match.when({ live: 'long-poll' }, (longPoll) =>
+                                respondToLongPollRead({
+                                    stream,
+                                    requestedOffset: longPoll.offset,
+                                    ifNoneMatch,
+                                    clientCursor: longPoll.cursor,
+                                    timeout: settings.longPollTimeout,
                                 }),
-                                // PROTOCOL.md 5.4: a cached HEAD would report a stale tail
-                                'cache-control': 'no-store',
-                            },
-                        }),
+                            ),
+                            Match.when({ live: 'sse' }, (sse) =>
+                                respondToSseRead({
+                                    stream,
+                                    requestedOffset: sse.offset,
+                                    clientCursor: sse.cursor,
+                                    waitTimeout: settings.longPollTimeout,
+                                    lifetime: settings.sseLifetime,
+                                }),
+                            ),
+                            Match.orElse((catchUp) =>
+                                respondToCatchUpRead({
+                                    stream,
+                                    requestedOffset: catchUp.offset,
+                                    ifNoneMatch,
+                                }),
+                            ),
+                        ),
                     ),
                 );
             })
+            .handle('headStream', ({ params }) =>
+                parseStreamPath(params).pipe(
+                    Effect.flatMap((stream) =>
+                        streams.getMetadata({ stream }).pipe(
+                            Effect.map((metadata) =>
+                                HttpApiSchema.withHeaders({
+                                    body: undefined,
+                                    headers: {
+                                        'content-type': metadata.contentType,
+                                        'stream-next-offset': metadata.tail,
+                                        'stream-closed': metadata.closed || undefined,
+                                        'stream-ttl': Option.getOrUndefined(metadata.ttlSeconds),
+                                        'stream-expires-at': Option.getOrUndefined(
+                                            metadata.expiresAt,
+                                        ),
+                                        etag: etagFor({
+                                            id: stream,
+                                            start: '-1',
+                                            end: metadata.tail,
+                                            closed: metadata.closed,
+                                        }),
+                                        // PROTOCOL.md 5.4: a cached HEAD would report a stale tail
+                                        'cache-control': 'no-store',
+                                    },
+                                }),
+                            ),
+                        ),
+                    ),
+                ),
+            )
             .handle('deleteStream', ({ params }) =>
-                streams.deleteStream({ stream: streamPathOf(params) }),
+                parseStreamPath(params).pipe(
+                    Effect.flatMap((stream) => streams.deleteStream({ stream })),
+                ),
             );
     }),
 );

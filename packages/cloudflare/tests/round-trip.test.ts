@@ -185,3 +185,34 @@ test(
     }),
     { timeout: 60_000 },
 );
+
+test(
+    'paths with a __ds segment are reserved, not streams',
+    Effect.gen(function* () {
+        // PROTOCOL.md 6: servers route __ds before stream operations; without subscriptions, 404
+        const base = (yield* streamUrlFor('reserved')).replace(/\/[^/]+$/, '');
+        const millis = yield* Clock.currentTimeMillis;
+        const paths = [
+            `${base}/__ds/subscriptions/sub-${millis}`,
+            `${base}/__ds`,
+            `${base}/app-${millis}/__ds/streams`,
+        ];
+        const statuses = yield* Effect.forEach(paths, (path) =>
+            Effect.gen(function* () {
+                const put = yield* HttpClient.put(path, {
+                    body: HttpBody.text('hello', 'text/plain'),
+                });
+                const post = yield* HttpClient.post(path, {
+                    body: HttpBody.text('more', 'text/plain'),
+                });
+                const get = yield* HttpClient.get(`${path}?offset=-1`);
+                const head = yield* HttpClient.head(path);
+                const del = yield* HttpClient.del(path);
+                return [put.status, post.status, get.status, head.status, del.status];
+            }),
+        );
+
+        expect(statuses).toEqual(Arr.makeBy(paths.length, () => [404, 404, 404, 404, 404]));
+    }),
+    { timeout: 60_000 },
+);
